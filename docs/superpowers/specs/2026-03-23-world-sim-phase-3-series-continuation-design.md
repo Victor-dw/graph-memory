@@ -214,9 +214,9 @@ New module for continuation/branch setup.
 
 Responsibilities:
 
-- load a source run’s exported final world state and director state
+- load a source run’s exported final world state, belief state, and director state
 - prepare the runtime database for the next run
-- rehydrate canonical world truth and director state before execution
+- rehydrate canonical world truth, subjective belief state, and director state before execution
 
 This is the main new runtime bridge in Phase 3.
 
@@ -309,6 +309,7 @@ Default behavior:
 - target a series
 - find that series’s `latestRunId`
 - restore world state from the source run’s `state/final-world.json`
+- restore belief state from the source run’s `state/final-beliefs.json`
 - restore director state from `state/final-director.json`
 - continue the story by running the requested number of turns
 - export a new run bundle into the same series
@@ -335,6 +336,7 @@ Explicit behavior:
 - create a child series id
 - initialize a new series directory
 - restore world state and director state from the source run
+- restore belief state from the source run
 - execute the requested number of turns
 - write the new run into the child series
 - record lineage in both the child series metadata and the new run manifest
@@ -350,8 +352,9 @@ Recommended MVP strategy:
 1. create/open the configured story DB
 2. clear story runtime state
 3. re-seed canonical entities and relations from exported `final-world.json`
-4. re-seed persisted director state from exported `final-director.json`
-5. begin new turns from the restored state
+4. re-seed subjective beliefs from exported `final-beliefs.json`
+5. re-seed persisted director state from exported `final-director.json`
+6. begin new turns from the restored state
 
 Important note:
 
