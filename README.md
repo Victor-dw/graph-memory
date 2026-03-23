@@ -247,6 +247,44 @@ In `branch` mode, the run bundle is written under the generated child series id:
 <series-root>/<generated-child-series-id>/runs/<run-id>/
 ```
 
+### `story:long-run` workflow
+
+For unattended continuation runs, use:
+
+```bash
+npm run story:long-run -- --series=my-mainline --series-root=./series --turns=3 --duration-hours=24
+```
+
+`story:long-run` is a thin orchestration layer over `story:series`:
+
+- it repeatedly runs `story:series` in `continue` mode against the same series
+- it writes a control session under `<series-root>/.long-run/<label>/`
+- it persists `summary.json` and `events.jsonl` so you can inspect progress while the run is active
+- it stops cleanly if you create the session `STOP` file
+- for real runs, it validates that the runtime is pinned to MiniMax Anthropic-compatible settings:
+  - `NOVEL_LLM_MODE=anthropic-compatible`
+  - `NOVEL_LLM_BASE_URL=https://api.minimaxi.com/anthropic`
+  - `NOVEL_LLM_MODEL=MiniMax-M2.7`
+
+Useful options:
+
+- `--max-runs=<n>`: stop after `n` successful continuation runs
+- `--cooldown-seconds=<n>`: sleep between runs
+- `--label=<name>`: stable session label instead of an auto timestamp
+- `--control-dir=<path>`: override the default control root before the session label is appended
+
+Example:
+
+```bash
+npm run story:long-run -- \
+  --series=xianxia-mainline \
+  --series-root=.local/series-24h \
+  --turns=3 \
+  --duration-hours=24 \
+  --cooldown-seconds=5 \
+  --label=minimax-24h
+```
+
 ### Environment variables
 
 Story runtime config is read from environment variables:
