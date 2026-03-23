@@ -303,6 +303,18 @@ Each run summary should include:
 Only runs with `status=success` may become `latestRunId`.
 Failed or partial runs must remain visible for diagnostics but must not advance the canonical continuation pointer.
 
+`latestRunId` should be nullable until the series records its first successful run.
+That allows the system to represent:
+
+- a newly created root series with no runs yet
+- a series whose attempted initial run failed
+
+For such series:
+
+- `latestRunId = null`
+- `runCount` may still be greater than zero if failed attempts are recorded
+- `story:series --mode=continue` should treat the next successful run as the first canonical continuation point rather than trying to restore from a missing prior success
+
 ### Child series naming
 
 Child series ids should be readable and stable for humans browsing the filesystem.
@@ -457,7 +469,6 @@ This should create a child series rather than appending to `my-mainline`.
 - `--mode=continue|branch`
 - `--from-run=<run-id>`
 - `--turns=<n>`
-- `--output-dir=<path>`
 - `--stub-model`
 
 The Phase 3 CLI should default its series root area to:
@@ -473,6 +484,19 @@ so the resulting series layout becomes:
 ```
 
 `--series-root` should override that default so multiple novel projects can keep separate series trees.
+
+Phase 3 should not carry over the Phase 2 `--output-dir` argument into `story:series`.
+
+Reason:
+
+- `story:series` is series-oriented, not run-bundle-root-oriented
+- run bundles should always live under `<series-root>/<series-id>/runs/<run-id>/`
+- keeping both `--series-root` and `--output-dir` would create two competing path controls for the same artifact
+
+So the Phase 3 CLI contract should be:
+
+- `story:run` and `story:batch` continue using `--output-dir`
+- `story:series` uses `--series-root` instead
 
 ### Reset semantics
 
@@ -503,6 +527,12 @@ If the caller passes:
 - `--mode=continue` with a non-latest `--from-run`
 
 the CLI should fail clearly before any restore or execution work begins.
+
+If the caller runs `story:series --mode=continue` against an existing series whose `latestRunId` is still `null`, the CLI should:
+
+- treat the run as that series’s first successful canonical run
+- skip restore because there is no prior successful continuation point
+- keep failed historical attempts visible in metadata without treating them as continuation sources
 
 ### Corrupt source bundle
 
