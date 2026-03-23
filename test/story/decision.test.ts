@@ -137,4 +137,86 @@ describe("story decision engines", () => {
     expect(actions).toHaveLength(2);
     expect(actions.map((action) => action.type)).toEqual(["fortify-secret-realm", "mediate-inheritance-dispute"]);
   });
+
+  it("penalizes recently repeated actor actions so loops can break", async () => {
+    const liYao: StoryCharacter = {
+      id: "c-li-yao",
+      name: "Li Yao",
+      realm: "Foundation",
+      coreDesires: ["survive", "ascend"],
+      shortTermGoals: ["hide-bloodline"],
+      taboos: ["betray-master"],
+      resources: { spiritStones: 40, reputation: 10 },
+      hiddenTruths: ["ancient-bloodline"],
+      emotionalVectors: { "c-su-wan": 0.6, "c-shen-mo": -0.4 },
+      publicIdentity: "outer-sect disciple",
+      privateIdentity: "sealed heir",
+    };
+    const secrecyPressure: StoryNarrativeSignal = {
+      id: "ns-secret-pressure",
+      kind: "secret-pressure",
+      subjectId: "c-li-yao",
+      relatedId: "t-secret-realm",
+      weight: 0.7,
+      payloadJson: JSON.stringify({ pressure: "high" }),
+      status: "active",
+    };
+
+    const actions = await rankActorActions({
+      actor: liYao,
+      beliefs: [],
+      worldSignals: [secrecyPressure],
+      recentActionCounts: {
+        "conceal-bloodline": 4,
+      },
+      model: {
+        rerankActorActions: async (candidateActions: StoryAction[]) => candidateActions,
+      },
+    } as any);
+
+    expect(actions).toHaveLength(2);
+    expect(actions.map((action) => action.type)).toEqual([
+      "seek-artifact",
+      "train-breakthrough",
+    ]);
+    expect(actions.some((action) => action.type === "conceal-bloodline")).toBe(false);
+  });
+
+  it("penalizes recently repeated faction actions so pressure can rotate", async () => {
+    const sect: StoryFaction = {
+      id: "f-cloud-sword",
+      name: "Cloud Sword Sect",
+      agenda: ["preserve-orthodoxy", "control-secret-realm"],
+      constraints: ["inheritance-dispute"],
+      doctrine: "order-before-truth",
+      internalBlocks: ["elder-lineage-rivalry"],
+      strategicTargets: ["a-ember-seal"],
+      publicPosture: "righteous-sect",
+      hiddenOperations: ["surveil-disciples"],
+    };
+    const realmPressure: StoryNarrativeSignal = {
+      id: "ns-realm-pressure",
+      kind: "realm-pressure",
+      subjectId: "t-secret-realm",
+      relatedId: "a-ember-seal",
+      weight: 1,
+      payloadJson: JSON.stringify({ pressure: "high" }),
+      status: "active",
+    };
+
+    const actions = await rankFactionActions({
+      faction: sect,
+      beliefs: [],
+      worldSignals: [realmPressure],
+      recentActionCounts: {
+        "fortify-secret-realm": 4,
+      },
+      model: {
+        rerankFactionActions: async (candidateActions: StoryAction[]) => candidateActions,
+      },
+    } as any);
+
+    expect(actions[0]?.type).toBe("mediate-inheritance-dispute");
+    expect(actions.some((action) => action.type === "fortify-secret-realm")).toBe(false);
+  });
 });

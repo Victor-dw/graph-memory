@@ -49,6 +49,42 @@ describe("narrative director", () => {
     expect(choice.primaryPovId).not.toBe("c-offstage");
   });
 
+  it("treats artifact showdown contenders as onstage participants for chapter focus", async () => {
+    const choice = await selectChapterFocus({
+      events: [
+        {
+          id: "sev-8-1",
+          turnNumber: 8,
+          type: "artifact-showdown",
+          summary: "The Ember Seal showdown forces all hidden players into the open.",
+          payload: {
+            artifactId: "a-ember-seal",
+            conflictId: "conflict:a-ember-seal",
+            contenderIds: ["c-li-yao", "c-su-wan", "c-shen-mo"],
+            subjectId: "a-ember-seal",
+            objectId: "conflict:a-ember-seal",
+            threadId: "t-secret-realm",
+          },
+        },
+        {
+          id: "sev-8-2",
+          turnNumber: 8,
+          type: "conceal-bloodline",
+          summary: "Li Yao suppresses a dangerous resonance.",
+          payload: { subjectId: "c-li-yao", objectId: "conceal-bloodline", threadId: "t-secret-realm" },
+        },
+      ],
+      activeThreads: fixtureThreads,
+      activeTensions: fixtureTensions,
+      ensembleState: fixtureEnsemble,
+      recentPovIds: [],
+      model: fakeDirectorModel(),
+    });
+
+    expect(["c-li-yao", "c-su-wan", "c-shen-mo"]).toContain(choice.primaryPovId);
+    expect(choice.eventIds).toContain("sev-8-1");
+  });
+
   it("round-trips saved director state snapshots", () => {
     const db = createTestDb();
     try {

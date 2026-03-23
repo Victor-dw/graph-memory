@@ -11,6 +11,9 @@ export interface StoryStateChange {
 }
 
 interface EventPayloadWithBelief {
+  artifactId?: string;
+  contenderIds?: string[];
+  conflictId?: string;
   subjectId?: string;
   predicate?: string;
   objectId?: string;
@@ -22,7 +25,11 @@ interface ResolvedActionInput extends StoryAction {
   targetArtifactId?: string;
 }
 
-export function resolveActionConflicts(actions: StoryAction[], turnNumber: number): StoryResolvedEvent[] {
+export function resolveActionConflicts(
+  actions: StoryAction[],
+  turnNumber: number,
+  recentArtifactConflictCounts: Record<string, number> = {},
+): StoryResolvedEvent[] {
   const normalizedActions = actions.map((action) => ({
     ...action,
     actorId: inferActorId(action),
@@ -44,6 +51,8 @@ export function resolveActionConflicts(actions: StoryAction[], turnNumber: numbe
   for (const [artifactId, contenders] of artifactBuckets) {
     if (contenders.length < 2) continue;
     const conflictId = buildConflictAggregateId(artifactId, turnNumber);
+    const priorConflictCount = recentArtifactConflictCounts[artifactId] ?? 0;
+    const conflictEventType = priorConflictCount >= 2 ? "artifact-showdown" : "artifact-conflict";
     for (const contender of contenders) {
       conflictingActionIds.add(contender.id);
     }
@@ -51,8 +60,10 @@ export function resolveActionConflicts(actions: StoryAction[], turnNumber: numbe
     events.push({
       id: `sev-${turnNumber}-${eventOrdinal++}`,
       turnNumber,
-      type: "artifact-conflict",
-      summary: `${artifactId} becomes the center of a multi-party contest.`,
+      type: conflictEventType,
+      summary: conflictEventType === "artifact-showdown"
+        ? `${artifactId} erupts into an open showdown that can no longer remain contained.`
+        : `${artifactId} becomes the center of a multi-party contest.`,
       payload: {
         artifactId,
         conflictId,
@@ -87,6 +98,7 @@ export function applyResolvedEvents(db: DatabaseSyncInstance, events: StoryResol
       continue;
     }
     insertStoryRelation(db, {
+      id: buildStableRelationId(payload),
       fromId: payload.subjectId,
       relation: payload.predicate,
       toId: payload.objectId,
@@ -110,7 +122,7 @@ export function deriveNarrativeSignalsFromEvents(events: StoryResolvedEvent[]): 
     const subjectId = typeof payload?.subjectId === "string" ? payload.subjectId : "t-secret-realm";
     const relatedId = typeof payload?.objectId === "string" ? payload.objectId : undefined;
     return {
-      id: `ns-${event.id ?? `${event.turnNumber}-${index}`}`,
+      id: buildStableSignalId(event, payload, index),
       kind: event.type,
       subjectId,
       relatedId,
@@ -143,7 +155,8 @@ function inferTargetArtifactId(action: StoryAction): string | undefined {
 }
 
 function buildConflictAggregateId(artifactId: string, turnNumber: number): string {
-  return `conflict:${artifactId}:${turnNumber}`;
+  void turnNumber;
+  return `conflict:${artifactId}`;
 }
 
 function createResolvedEventFromAction(
@@ -177,4 +190,26 @@ function createResolvedEventFromAction(
       objectId: action.type,
     },
   };
+}
+
+function buildStableRelationId(payload: EventPayloadWithBelief): string {
+  return `sr-${payload.subjectId}-${payload.predicate}-${payload.objectId}`;
+}
+
+function buildStableSignalId(
+  event: StoryResolvedEvent,
+  payload: EventPayloadWithBelief | null,
+  index: number,
+): string {
+  if (typeof payload?.artifactId === "string" && typeof payload.conflictId === "string") {
+    return `ns-conflict-${payload.artifactId}`;
+  }
+  if (
+    typeof payload?.subjectId === "string"
+    && typeof payload.predicate === "string"
+    && typeof payload.objectId === "string"
+  ) {
+    return `ns-${event.type}-${payload.subjectId}-${payload.objectId}`;
+  }
+  return `ns-${event.id ?? `${event.turnNumber}-${index}`}`;
 }

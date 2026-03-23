@@ -12,6 +12,7 @@ export interface FactionEngineInput {
   faction: StoryFaction;
   beliefs: StoryBelief[];
   worldSignals: StoryNarrativeSignal[];
+  recentActionCounts?: Record<string, number>;
   model: Pick<StoryModelClient, "rerankFactionActions">;
 }
 
@@ -57,6 +58,7 @@ function scoreFactionAction(action: StoryAction, input: FactionEngineInput): Sco
   const realmPressureWeight = signals
     .filter((signal) => signal.kind.includes("realm"))
     .reduce((total, signal) => total + (signal.weight ?? 1), 0);
+  const repetitionPenalty = (input.recentActionCounts?.[action.type] ?? 0);
 
   let score = 0;
   if (action.type === "purge-rival-line") {
@@ -72,7 +74,7 @@ function scoreFactionAction(action: StoryAction, input: FactionEngineInput): Sco
     if (agenda.has("preserve-orthodoxy")) score += 1;
   }
 
-  return { ...action, score };
+  return { ...action, score: score - repetitionPenalty };
 }
 
 function buildFactionRerankContext(input: FactionEngineInput): RuntimeFactionDecisionInput {

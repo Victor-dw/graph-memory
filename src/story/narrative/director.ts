@@ -36,6 +36,7 @@ interface ScoredBundle extends ChapterSelection {
 }
 
 interface EventPayloadShape {
+  contenderIds?: string[];
   subjectId?: string;
   objectId?: string;
   observers?: string[];
@@ -139,6 +140,11 @@ function collectCandidatePovIds(events: Array<StoryResolvedEvent & { id: string 
     const payload = event.payload as EventPayloadShape | null;
     if (payload?.subjectId?.startsWith("c-")) ids.add(payload.subjectId);
     if (payload?.objectId?.startsWith("c-")) ids.add(payload.objectId);
+    if (Array.isArray(payload?.contenderIds)) {
+      for (const contenderId of payload.contenderIds) {
+        if (contenderId.startsWith("c-")) ids.add(contenderId);
+      }
+    }
     if (Array.isArray(payload?.observers)) {
       for (const observerId of payload.observers) {
         if (observerId.startsWith("c-")) ids.add(observerId);
@@ -157,6 +163,11 @@ function collectOnstagePovIds(events: Array<StoryResolvedEvent & { id: string }>
     const payload = event.payload as EventPayloadShape | null;
     if (payload?.subjectId?.startsWith("c-")) ids.add(payload.subjectId);
     if (payload?.objectId?.startsWith("c-")) ids.add(payload.objectId);
+    if (Array.isArray(payload?.contenderIds)) {
+      for (const contenderId of payload.contenderIds) {
+        if (contenderId.startsWith("c-")) ids.add(contenderId);
+      }
+    }
     if (Array.isArray(payload?.observers)) {
       for (const observerId of payload.observers) {
         if (observerId.startsWith("c-")) ids.add(observerId);
@@ -171,11 +182,13 @@ function eventRelevanceForPov(event: StoryResolvedEvent & { id: string }, povId:
   let participation = 0;
   if (payload?.subjectId === povId) participation += 1.2;
   if (payload?.objectId === povId) participation += 0.9;
+  if (Array.isArray(payload?.contenderIds) && payload.contenderIds.includes(povId)) participation += 1.1;
   if (Array.isArray(payload?.observers) && payload.observers.includes(povId)) participation += 0.8;
   if (participation === 0) return 0;
   let situational = 0;
   if (event.type.includes("conflict")) situational += 0.4;
   if (event.type.includes("secret")) situational += 0.4;
+  if (event.type.includes("showdown")) situational += 0.8;
   return participation + situational;
 }
 
@@ -202,6 +215,9 @@ function inferSecondaryPov(event: StoryResolvedEvent & { id: string }, primaryPo
   }
   if (payload?.objectId && payload.objectId !== primaryPovId && payload.objectId.startsWith("c-")) {
     return payload.objectId;
+  }
+  if (Array.isArray(payload?.contenderIds)) {
+    return payload.contenderIds.find((contenderId) => contenderId !== primaryPovId && contenderId.startsWith("c-"));
   }
   return undefined;
 }

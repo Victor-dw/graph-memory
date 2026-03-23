@@ -166,9 +166,74 @@ describe("story turn simulator", () => {
       expect(conflictBelief).toEqual({
         subject_id: "a-ember-seal",
         predicate: "IN_CONFLICT",
-        object_id: "conflict:a-ember-seal:5",
+        object_id: "conflict:a-ember-seal",
       });
       expect(lossyBelief).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("upserts repeated execute relations and signals instead of appending duplicates forever", async () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+
+      for (const turnNumber of [6, 7]) {
+        await runStoryTurn(db, {
+          turnNumber,
+          model: {
+            rerankActorActions: async (actions: StoryAction[]) =>
+              reorderActions(actions, ["conceal-bloodline", "train-breakthrough"]),
+            rerankFactionActions: async (actions: StoryAction[]) =>
+              reorderActions(actions, ["fortify-secret-realm", "mediate-inheritance-dispute"]),
+          },
+        });
+      }
+
+      const relationCount = (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM story_relations
+        WHERE from_id = ? AND relation = ? AND to_id = ?
+      `).get("c-li-yao", "EXECUTES", "conceal-bloodline") as { c: number }).c;
+      const signalCount = (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM story_narrative_signals
+        WHERE kind = ? AND subject_id = ? AND related_id = ?
+      `).get("conceal-bloodline", "c-li-yao", "conceal-bloodline") as { c: number }).c;
+
+      expect(relationCount).toBe(1);
+      expect(signalCount).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("escalates repeated artifact contention into an artifact-showdown event", async () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+
+      for (const turnNumber of [8, 9, 10]) {
+        await runStoryTurn(db, {
+          turnNumber,
+          model: {
+            rerankActorActions: async (actions: StoryAction[]) => forceSeekArtifact(actions),
+            rerankFactionActions: async (actions: StoryAction[]) => actions,
+          },
+        });
+      }
+
+      const showdownRow = db.prepare(`
+        SELECT type, payload
+        FROM story_events
+        WHERE turn_number = 10 AND type = 'artifact-showdown'
+      `).get() as { type: string; payload: string } | undefined;
+
+      expect(showdownRow?.type).toBe("artifact-showdown");
+      expect(showdownRow?.payload).toContain("\"conflictId\":\"conflict:a-ember-seal\"");
     } finally {
       db.close();
     }

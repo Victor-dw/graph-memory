@@ -39,6 +39,9 @@ interface SettledWorldState {
   beliefsByActor: Record<string, StoryBelief[]>;
   beliefsByFaction: Record<string, StoryBelief[]>;
   worldSignals: StoryNarrativeSignal[];
+  recentActionCountsByActor: Record<string, Record<string, number>>;
+  recentActionCountsByFaction: Record<string, Record<string, number>>;
+  recentArtifactConflictCounts: Record<string, number>;
 }
 
 export async function runStoryTurn(db: DatabaseSyncInstance, input: StoryTurnInput): Promise<StoryTurnResult> {
@@ -48,6 +51,7 @@ export async function runStoryTurn(db: DatabaseSyncInstance, input: StoryTurnInp
       actor,
       beliefs: settlement.beliefsByActor[actor.id] ?? [],
       worldSignals: settlement.worldSignals,
+      recentActionCounts: settlement.recentActionCountsByActor[actor.id] ?? {},
       model: input.model,
     })
   ))).flat();
@@ -56,11 +60,16 @@ export async function runStoryTurn(db: DatabaseSyncInstance, input: StoryTurnInp
       faction,
       beliefs: settlement.beliefsByFaction[faction.id] ?? [],
       worldSignals: settlement.worldSignals,
+      recentActionCounts: settlement.recentActionCountsByFaction[faction.id] ?? {},
       model: input.model,
     })
   ))).flat();
 
-  const events = resolveActionConflicts([...actorActions, ...factionActions], input.turnNumber);
+  const events = resolveActionConflicts(
+    [...actorActions, ...factionActions],
+    input.turnNumber,
+    settlement.recentArtifactConflictCounts,
+  );
   const narrativeSignals = deriveNarrativeSignalsFromEvents(events);
   const updates = persistTurnAtomically(db, input.turnNumber, events, narrativeSignals);
 
@@ -134,5 +143,109 @@ function settleWorldState(db: DatabaseSyncInstance): SettledWorldState {
     updatedAt: row.updated_at,
   }));
 
-  return { actors, factions, beliefsByActor, beliefsByFaction, worldSignals };
+  const recentPatterns = collectRecentPatterns(db);
+
+  return {
+    actors,
+    factions,
+    beliefsByActor,
+    beliefsByFaction,
+    worldSignals,
+    recentActionCountsByActor: recentPatterns.recentActionCountsByActor,
+    recentActionCountsByFaction: recentPatterns.recentActionCountsByFaction,
+    recentArtifactConflictCounts: recentPatterns.recentArtifactConflictCounts,
+  };
+}
+
+function collectRecentPatterns(db: DatabaseSyncInstance): {
+  recentActionCountsByActor: Record<string, Record<string, number>>;
+  recentActionCountsByFaction: Record<string, Record<string, number>>;
+  recentArtifactConflictCounts: Record<string, number>;
+} {
+  const rows = db.prepare(`
+    SELECT payload
+    FROM story_turns
+    ORDER BY turn_number DESC
+    LIMIT 6
+  `).all() as Array<{ payload: string }>;
+
+  const recentActionCountsByActor: Record<string, Record<string, number>> = {};
+  const recentActionCountsByFaction: Record<string, Record<string, number>> = {};
+  const recentArtifactConflictCounts: Record<string, number> = {};
+
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.payload) as unknown;
+    } catch {
+      continue;
+    }
+    const events = Array.isArray((parsed as { events?: unknown[] })?.events)
+      ? (parsed as { events: unknown[] }).events
+      : [];
+
+    for (const event of events) {
+      if (!event || typeof event !== "object") {
+        continue;
+      }
+      const typedEvent = event as {
+        type?: string;
+        payload?: {
+          subjectId?: string;
+          predicate?: string;
+          objectId?: string;
+          artifactId?: string;
+          contenderIds?: string[];
+        };
+      };
+      if (
+        (typedEvent.type === "artifact-conflict" || typedEvent.type === "artifact-showdown")
+        && typeof typedEvent.payload?.artifactId === "string"
+      ) {
+        recentArtifactConflictCounts[typedEvent.payload.artifactId] =
+          (recentArtifactConflictCounts[typedEvent.payload.artifactId] ?? 0) + 1;
+        for (const contenderId of typedEvent.payload.contenderIds ?? []) {
+          incrementRecentActionCount(recentActionCountsByActor, contenderId, "seek-artifact");
+        }
+        continue;
+      }
+
+      if (
+        typedEvent.payload?.predicate === "EXECUTES"
+        && typeof typedEvent.payload.subjectId === "string"
+        && typeof typedEvent.payload.objectId === "string"
+      ) {
+        if (typedEvent.payload.subjectId.startsWith("c-")) {
+          incrementRecentActionCount(
+            recentActionCountsByActor,
+            typedEvent.payload.subjectId,
+            typedEvent.payload.objectId,
+          );
+        } else if (typedEvent.payload.subjectId.startsWith("f-")) {
+          incrementRecentActionCount(
+            recentActionCountsByFaction,
+            typedEvent.payload.subjectId,
+            typedEvent.payload.objectId,
+          );
+        }
+      }
+    }
+  }
+
+  return {
+    recentActionCountsByActor,
+    recentActionCountsByFaction,
+    recentArtifactConflictCounts,
+  };
+}
+
+function incrementRecentActionCount(
+  countsByActor: Record<string, Record<string, number>>,
+  actorId: string,
+  actionType: string,
+): void {
+  if (!countsByActor[actorId]) {
+    countsByActor[actorId] = {};
+  }
+  countsByActor[actorId][actionType] = (countsByActor[actorId][actionType] ?? 0) + 1;
 }

@@ -12,6 +12,7 @@ export interface ActorEngineInput {
   actor: StoryCharacter;
   beliefs: StoryBelief[];
   worldSignals: StoryNarrativeSignal[];
+  recentActionCounts?: Record<string, number>;
   model: Pick<StoryModelClient, "rerankActorActions">;
 }
 
@@ -57,6 +58,7 @@ function scoreAction(action: StoryAction, input: ActorEngineInput): ScoredStoryA
   const secretPressureWeight = signals
     .filter((signal) => signal.kind.includes("secret"))
     .reduce((total, signal) => total + (signal.weight ?? 1), 0);
+  const repetitionPenalty = (input.recentActionCounts?.[action.type] ?? 0);
 
   let score = 0;
   if (action.type === "seek-artifact") {
@@ -72,7 +74,7 @@ function scoreAction(action: StoryAction, input: ActorEngineInput): ScoredStoryA
     if (desires.has("survive")) score += 0.5;
   }
 
-  return { ...action, score };
+  return { ...action, score: score - repetitionPenalty };
 }
 
 function buildActorRerankContext(input: ActorEngineInput): RuntimeActorDecisionInput {
