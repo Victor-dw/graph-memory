@@ -314,7 +314,18 @@ Default behavior:
 - export a new run bundle into the same series
 - update `series.json`
 
-If the user explicitly supplies `--from-run`, continue from that run instead of the latest one.
+`continue` must remain a single-line forward progression within one series.
+Because of that, `continue` should only target the latest run of the series.
+
+If the user supplies `--from-run` and it is not the latest run for that series, the command must not append a new run to that same series. The system should either:
+
+- reject the request with a clear error, or
+- require the caller to switch to `--mode=branch`
+
+Phase 3 should choose the stricter rule:
+
+- `continue` accepts only the latest run
+- branching from any earlier run requires explicit `--mode=branch`
 
 ### Branch mode
 
@@ -344,7 +355,37 @@ Recommended MVP strategy:
 
 Important note:
 
-This means the exported `final-world.json` must be treated as a sufficiently complete canonical snapshot for continuation. If gaps exist in the current snapshot shape, Phase 3 should fill them by expanding the exported world snapshot rather than inventing a separate hidden restore format.
+This means the exported continuation snapshot must be treated as a sufficiently complete restore contract, not merely a debugging export.
+
+The current Phase 2 `final-world.json` is not yet sufficient because it omits subjective belief state, even though belief state is core to the approved system model and to turn execution.
+
+Phase 3 should therefore explicitly expand the continuation snapshot contract.
+
+Minimum continuation snapshot contents:
+
+- canonical entities
+- canonical relations
+- active threads
+- narrative signals
+- subjective character beliefs
+- any persisted faction-level belief state if present
+- director state snapshot
+
+Recommended contract:
+
+- keep `state/final-world.json` for canonical world truth
+- add `state/final-beliefs.json` for subjective belief state
+- keep `state/final-director.json` for narrative director state
+
+Restore targets should be explicitly defined as:
+
+- `story_entities`
+- `story_relations`
+- `story_beliefs`
+- `story_director_state`
+- any other persisted narrative tables required for continuity-preserving recall and turn simulation
+
+Phase 3 should prefer expanding the exported restore surface over inventing a hidden restore-only format.
 
 ## CLI Design
 
@@ -390,6 +431,18 @@ so the resulting series layout becomes:
 ```text
 ./series/<series-id>/runs/<run-id>/
 ```
+
+### Reset semantics
+
+`story:series` must not allow restored continuation state to be silently cleared by the runtime reset path.
+
+Phase 3 should make this rule explicit:
+
+- `story:series` restores prior state first
+- continuation/branch runs then execute with `resetOnStart=false`
+- if explicit clearing is ever needed for a root-series bootstrap flow, it should be a series-layer decision before restore, not something delegated to `runStoryLoop()` after restore
+
+This avoids conflicts with the current Phase 2 reset behavior and keeps the series CLI authoritative over continuation semantics.
 
 ## Error Handling
 
@@ -454,8 +507,17 @@ Verify:
 
 Verify:
 
-- chapter/run numbering grows across continuations
+- run numbering grows across continuations within a series
+- series-global chapter progression grows across continuations via metadata
 - a branch starting from run N diverges while preserving the original lineage
+
+Important numbering rule:
+
+- run bundle chapter filenames remain per-run (`chapter-001.md`, `chapter-002.md`, ...)
+- Phase 2 bundle format should remain stable
+- series-global chapter continuity should therefore be tracked in series metadata and optionally in run manifest fields such as `seriesChapterStart` / `seriesChapterEnd`
+
+Phase 3 should not silently redefine bundle-local chapter ordinals to be series-global unless that is made an explicit later-phase migration.
 
 ## Success Criteria
 
