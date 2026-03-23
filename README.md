@@ -186,6 +186,61 @@ This runs 3 turns and generates chapters on the configured cadence. The CLI prin
 - `db=...`
 - `resetOnStart=...`
 
+For independent multi-run experiments, use:
+
+```bash
+npm run story:batch -- --runs=2 --turns=3 --stub-model
+```
+
+For long-form novel production with durable continuation and branching, use:
+
+```bash
+npm run story:series -- --series=my-mainline --turns=6 --stub-model
+```
+
+### `story:series` workflow
+
+`story:series` organizes one evolving storyline as a filesystem-backed series:
+
+```text
+<series-root>/
+  <series-id>/
+    series.json
+    runs/
+      <run-id>/
+        index.json
+        world-log.jsonl
+        chapters/
+        state/
+```
+
+By default, `story:series` runs in `continue` mode:
+
+- if the target series does not exist yet, it creates a root series
+- if the target series already exists, it restores from the latest successful run
+- each new run still exports a full bundle under `runs/<run-id>/`
+
+Examples:
+
+```bash
+npm run story:series -- --series=my-mainline --turns=6 --stub-model
+npm run story:series -- --series=my-mainline --series-root=./series --turns=6 --stub-model
+```
+
+To branch from an earlier successful run, switch to explicit branch mode:
+
+```bash
+npm run story:series -- --series=my-mainline --mode=branch --from-run=<run-id> --turns=6 --stub-model
+```
+
+Branch mode creates a child series such as `my-mainline-branch-01` and keeps the source series unchanged.
+
+`story:series` uses `--series-root` instead of `--output-dir`. The bundle root is always:
+
+```text
+<series-root>/<series-id>/runs/<run-id>/
+```
+
 ### Environment variables
 
 Story runtime config is read from environment variables:

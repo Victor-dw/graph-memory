@@ -138,10 +138,15 @@ export function deriveChildSeriesId(parentSeriesId: string, ordinal: number): st
 ```ts
 export interface StorySeriesRunRecord {
   runId: string;
+  startedAt: string;
+  finishedAt: string;
+  turnCount: number;
+  path: string;
   status: "running" | "success" | "failed";
   chapterCount: number;
   seriesChapterStart?: number;
   seriesChapterEnd?: number;
+  continuedFromRunId?: string | null;
 }
 
 export interface StorySeriesMetadata {
@@ -149,6 +154,10 @@ export interface StorySeriesMetadata {
   seriesId: string;
   type: "mainline" | "alternate";
   mode: "root" | "branch";
+  createdAt: string;
+  updatedAt: string;
+  parentSeriesId?: string;
+  branchedFromRunId?: string;
   latestRunId: string | null;
   runCount: number;
   totalChapterCount: number;
@@ -182,8 +191,10 @@ expect(existsSync(join(bundle.bundlePath, "state", "final-beliefs.json"))).toBe(
 expect(JSON.parse(readFileSync(join(bundle.bundlePath, "index.json"), "utf8"))).toMatchObject({
   schemaVersion: 1,
   seriesId: null,
+  seriesMode: null,
   continuedFromRunId: null,
   branchedFromRunId: null,
+  parentSeriesId: null,
 });
 ```
 
@@ -278,6 +289,14 @@ export async function restoreSeriesRun(
 }
 ```
 
+- [ ] **Step 2.5: Add restore validation and failure tests**
+
+Cover:
+
+- missing `final-world.json`, `final-beliefs.json`, or `final-director.json`
+- malformed JSON payloads
+- partial restore cleanup so failed hydration does not leave mixed runtime state
+
 - [ ] **Step 3: Re-run the restore tests**
 
 Run: `npx vitest run test/story/series-restore.test.ts`
@@ -314,17 +333,30 @@ it("creates a root series and then continues from its latest successful run", as
   expect(result.stdout).toContain("mode=continue");
 });
 
-it("branches from an earlier successful run into a child series", async () => {
+it("rejects branch without --from-run", async () => {
   const result = await execa("npm", [
     "run",
     "story:series",
     "--",
     "--series=mainline-a",
     "--mode=branch",
-    "--from-run=run-id-placeholder",
     "--turns=3",
     "--stub-model",
     `--series-root=${seriesRoot}`,
+  ], { cwd: repoRoot, reject: false });
+
+  expect(result.exitCode).not.toBe(0);
+});
+
+it("rejects --output-dir because story:series is series-root driven", async () => {
+  const result = await execa("npm", [
+    "run",
+    "story:series",
+    "--",
+    "--series=mainline-a",
+    "--turns=3",
+    "--stub-model",
+    "--output-dir=./runs",
   ], { cwd: repoRoot, reject: false });
 
   expect(result.exitCode).not.toBe(0);
@@ -385,6 +417,11 @@ Each successful run should update:
 - `totalChapterCount`
 - `seriesChapterStart`
 - `seriesChapterEnd`
+- `startedAt`
+- `finishedAt`
+- `turnCount`
+- `path`
+- `continuedFromRunId`
 
 - [ ] **Step 4: Run the series CLI tests**
 
@@ -422,10 +459,21 @@ Reject:
 
 - `branch` without `--from-run`
 - `continue` with non-latest `--from-run`
+- `--output-dir` in `story:series`
+- `--from-run` that does not exist in the source series
 
 - [ ] **Step 3: Preserve failed runs without advancing latestRunId**
 
 Record failed attempts with `status: "failed"` and leave the canonical continuation pointer untouched.
+
+- [ ] **Step 3.5: Cover branch lineage and source-series immutability**
+
+Add CLI assertions that:
+
+- `branch` creates a child series id like `<parent-series-id>-branch-01`
+- child metadata records `parentSeriesId` and `branchedFromRunId`
+- source series metadata is unchanged after the branch run
+- branch bundles carry `seriesId`, `seriesMode`, `continuedFromRunId`, `branchedFromRunId`, and `parentSeriesId`
 
 - [ ] **Step 4: Re-run the series CLI tests**
 

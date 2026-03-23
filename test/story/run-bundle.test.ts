@@ -48,6 +48,7 @@ describe("story run bundle", () => {
       expect(existsSync(path.join(bundle.bundlePath, "world-log.jsonl"))).toBe(true);
       expect(existsSync(path.join(bundle.bundlePath, "chapters", "chapter-001.md"))).toBe(true);
       expect(existsSync(path.join(bundle.bundlePath, "state", "final-world.json"))).toBe(true);
+      expect(existsSync(path.join(bundle.bundlePath, "state", "final-beliefs.json"))).toBe(true);
       expect(existsSync(path.join(bundle.bundlePath, "state", "final-director.json"))).toBe(true);
       expect(existsSync(path.join(bundle.bundlePath, "state", "consistency.json"))).toBe(true);
 
@@ -65,6 +66,11 @@ describe("story run bundle", () => {
         model: { mode: string; name: string };
         bundlePath: string;
         outputRoot: string;
+        seriesId: string | null;
+        seriesMode: string | null;
+        continuedFromRunId: string | null;
+        branchedFromRunId: string | null;
+        parentSeriesId: string | null;
       };
       expect(index.schemaVersion).toBe(1);
       expect(index.runId).toBe("test-run-001");
@@ -79,6 +85,11 @@ describe("story run bundle", () => {
       expect(index.model).toEqual({ mode: "stub", name: "stub-story-model" });
       expect(index.bundlePath).toBe(path.join(outputDir, "test-run-001"));
       expect(index.outputRoot).toBe(outputDir);
+      expect(index.seriesId).toBeNull();
+      expect(index.seriesMode).toBeNull();
+      expect(index.continuedFromRunId).toBeNull();
+      expect(index.branchedFromRunId).toBeNull();
+      expect(index.parentSeriesId).toBeNull();
 
       const worldLogLines = readFileSync(path.join(bundle.bundlePath, "world-log.jsonl"), "utf8")
         .trim()

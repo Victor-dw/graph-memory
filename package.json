@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "story:run": "node --import tsx src/story/cli.ts",
     "story:batch": "node --import tsx src/story/batch-cli.ts",
+    "story:series": "node --import tsx src/story/series-cli.ts",
     "test:story": "vitest run test/story",
     "test:story:cli": "vitest run test/story/cli.test.ts"
   },

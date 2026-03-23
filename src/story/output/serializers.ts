@@ -14,6 +14,11 @@ export interface RunBundleMetadata {
   model: RunBundleModelMetadata;
   startedAt: string;
   finishedAt: string;
+  seriesId?: string | null;
+  seriesMode?: "root" | "branch" | null;
+  continuedFromRunId?: string | null;
+  branchedFromRunId?: string | null;
+  parentSeriesId?: string | null;
 }
 
 export interface RunBundleSummary {
@@ -38,6 +43,11 @@ export interface RunBundleIndexJson {
   model: RunBundleModelMetadata;
   bundlePath: string;
   outputRoot: string;
+  seriesId: string | null;
+  seriesMode: "root" | "branch" | null;
+  continuedFromRunId: string | null;
+  branchedFromRunId: string | null;
+  parentSeriesId: string | null;
 }
 
 export function serializeIndexJson(
@@ -60,6 +70,11 @@ export function serializeIndexJson(
     model: metadata.model,
     bundlePath,
     outputRoot,
+    seriesId: metadata.seriesId ?? null,
+    seriesMode: metadata.seriesMode ?? null,
+    continuedFromRunId: metadata.continuedFromRunId ?? null,
+    branchedFromRunId: metadata.branchedFromRunId ?? null,
+    parentSeriesId: metadata.parentSeriesId ?? null,
   };
 }
 

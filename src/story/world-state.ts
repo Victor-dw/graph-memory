@@ -1,10 +1,13 @@
 import type { DatabaseSyncInstance } from "@photostructure/sqlite";
 import { createSeedWorld } from "./bootstrap.ts";
+import { saveDirectorState, type NarrativeDirectorState } from "./narrative/state.ts";
 import type { SeedWorld, StoryCharacter, StoryThread } from "./types.ts";
 import { propagateBeliefsFromEvents } from "./beliefs.ts";
+import type { StoryWorldSnapshot } from "./memory/consistency.ts";
 import {
   insertStoryEntities,
   insertStoryEvent,
+  type StoryBelief,
   insertStoryRelation,
   insertStoryTurn,
   listStoryEntitiesByKind,
@@ -188,6 +191,98 @@ export function initializeStoryWorld(db: DatabaseSyncInstance): StoryWorldState 
   return world;
 }
 
+export interface StoryRestoreSnapshot {
+  world: StoryWorldSnapshot;
+  beliefs: StoryBelief[];
+  director: NarrativeDirectorState;
+  resumeTurnNumber?: number;
+}
+
+export function restoreStorySnapshot(
+  db: DatabaseSyncInstance,
+  snapshot: StoryRestoreSnapshot,
+): void {
+  db.exec("BEGIN");
+  try {
+    clearPersistedStorySnapshot(db);
+
+    const entitiesByKind = new Map<string, Array<{ id: string; name: string }>>();
+    for (const entity of snapshot.world.entities) {
+      if (!entitiesByKind.has(entity.kind)) {
+        entitiesByKind.set(entity.kind, []);
+      }
+      entitiesByKind.get(entity.kind)?.push(entity.payload as { id: string; name: string });
+    }
+
+    for (const [kind, entities] of entitiesByKind.entries()) {
+      insertStoryEntities(db, entities, kind as "character" | "faction" | "location" | "artifact" | "thread" | "rule");
+    }
+
+    for (const relation of snapshot.world.relations) {
+      insertStoryRelation(db, {
+        id: relation.id,
+        fromId: relation.fromId,
+        relation: relation.relation,
+        toId: relation.toId,
+        visibility: relation.visibility,
+        intensity: relation.intensity,
+        sourceEventId: relation.sourceEventId,
+        createdAt: relation.createdAt,
+        updatedAt: relation.updatedAt,
+      });
+    }
+
+    for (const signal of snapshot.world.narrativeSignals) {
+      upsertStoryNarrativeSignal(db, {
+        id: signal.id,
+        kind: signal.kind,
+        subjectId: signal.subjectId,
+        relatedId: signal.relatedId,
+        weight: signal.weight,
+        payloadJson: signal.payloadJson,
+        status: signal.status,
+        createdAt: signal.createdAt,
+        updatedAt: signal.updatedAt,
+      });
+    }
+
+    for (const belief of snapshot.beliefs) {
+      db.prepare(`
+        INSERT INTO story_beliefs (
+          id, actor_id, subject_id, predicate, object_id, confidence, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(actor_id, subject_id, predicate) DO UPDATE SET
+          object_id = excluded.object_id,
+          confidence = excluded.confidence,
+          updated_at = excluded.updated_at
+      `).run(
+        `sb-restore-${belief.actorId}-${belief.subjectId}-${belief.predicate}`,
+        belief.actorId,
+        belief.subjectId,
+        belief.predicate,
+        belief.objectId,
+        belief.confidence,
+        Date.now(),
+        Date.now(),
+      );
+    }
+
+    if (snapshot.resumeTurnNumber && snapshot.resumeTurnNumber > 0) {
+      insertStoryTurn(db, {
+        turnNumber: snapshot.resumeTurnNumber,
+        summary: `Restored continuation checkpoint at turn ${snapshot.resumeTurnNumber}`,
+        payload: { restored: true, resumeTurnNumber: snapshot.resumeTurnNumber },
+      });
+    }
+
+    saveDirectorState(db, snapshot.director);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function listCanonicalNarrativeSignals(presentIds: Set<string>) {
   return [
     {
@@ -231,4 +326,21 @@ function countActiveNarrativeSignals(db: DatabaseSyncInstance): number {
     WHERE status = 'active'
   `).get() as { count: number } | undefined;
   return row?.count ?? 0;
+}
+
+function clearPersistedStorySnapshot(db: DatabaseSyncInstance): void {
+  const tables = [
+    "story_turns",
+    "story_events",
+    "story_beliefs",
+    "story_chapters",
+    "story_director_state",
+    "story_narrative_signals",
+    "story_relations",
+    "story_entities",
+  ] as const;
+
+  for (const table of tables) {
+    db.prepare(`DELETE FROM ${table}`).run();
+  }
 }

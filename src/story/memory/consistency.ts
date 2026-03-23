@@ -16,6 +16,9 @@ type StoryRelationRecord = {
   toId: string;
   visibility: string;
   intensity: number;
+  sourceEventId?: string;
+  createdAt: number;
+  updatedAt: number;
 };
 
 type StoryNarrativeSignalRecord = {
@@ -26,6 +29,8 @@ type StoryNarrativeSignalRecord = {
   weight: number;
   status: string;
   payloadJson: string;
+  createdAt: number;
+  updatedAt: number;
 };
 
 type StoryChapterRecord = {
@@ -122,7 +127,7 @@ function listAllStoryEntities(db: DatabaseSyncInstance): StoryEntityRecord[] {
 
 function listAllStoryRelations(db: DatabaseSyncInstance): StoryRelationRecord[] {
   const rows = db.prepare(`
-    SELECT id, from_id, relation, to_id, visibility, intensity
+    SELECT id, from_id, relation, to_id, visibility, intensity, source_event_id, created_at, updated_at
     FROM story_relations
     ORDER BY created_at ASC, id ASC
   `).all() as Array<{
@@ -132,6 +137,9 @@ function listAllStoryRelations(db: DatabaseSyncInstance): StoryRelationRecord[] 
     to_id: string;
     visibility: string;
     intensity: number;
+    source_event_id: string | null;
+    created_at: number;
+    updated_at: number;
   }>;
   return rows.map((row) => ({
     id: row.id,
@@ -140,6 +148,9 @@ function listAllStoryRelations(db: DatabaseSyncInstance): StoryRelationRecord[] 
     toId: row.to_id,
     visibility: row.visibility,
     intensity: row.intensity,
+    sourceEventId: row.source_event_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }));
 }
 
@@ -167,7 +178,7 @@ function listTrackedThreads(db: DatabaseSyncInstance): StoryThread[] {
 
 function listAllNarrativeSignals(db: DatabaseSyncInstance): StoryNarrativeSignalRecord[] {
   const rows = db.prepare(`
-    SELECT id, kind, subject_id, related_id, weight, status, payload_json
+    SELECT id, kind, subject_id, related_id, weight, status, payload_json, created_at, updated_at
     FROM story_narrative_signals
     WHERE status = 'active'
     ORDER BY updated_at DESC, id ASC
@@ -179,6 +190,8 @@ function listAllNarrativeSignals(db: DatabaseSyncInstance): StoryNarrativeSignal
     weight: number;
     status: string;
     payload_json: string;
+    created_at: number;
+    updated_at: number;
   }>;
   return rows.map((row) => ({
     id: row.id,
@@ -188,6 +201,8 @@ function listAllNarrativeSignals(db: DatabaseSyncInstance): StoryNarrativeSignal
     weight: row.weight,
     status: row.status,
     payloadJson: row.payload_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }));
 }
 

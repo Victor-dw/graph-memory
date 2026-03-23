@@ -41,6 +41,16 @@ export function listBeliefsForActor(db: DatabaseSyncInstance, actorId: string): 
   return listStoryBeliefsForActor(db, actorId);
 }
 
+export function buildStoryBeliefSnapshot(db: DatabaseSyncInstance): StoryBelief[] {
+  const actorRows = db.prepare(`
+    SELECT DISTINCT actor_id
+    FROM story_beliefs
+    ORDER BY actor_id ASC
+  `).all() as Array<{ actor_id: string }>;
+
+  return actorRows.flatMap((row) => listStoryBeliefsForActor(db, row.actor_id));
+}
+
 export function upsertBeliefFromEvent(db: DatabaseSyncInstance, actorId: string, event: StoryResolvedEvent): void {
   const payload = event.payload as BeliefEventPayload | null;
   if (!payload?.subjectId || !payload?.predicate || !payload?.objectId) return;

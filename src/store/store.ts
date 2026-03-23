@@ -771,6 +771,8 @@ export function insertStoryRelation(
     visibility?: string;
     intensity?: number;
     sourceEventId?: string;
+    createdAt?: number;
+    updatedAt?: number;
   },
 ): void {
   const now = Date.now();
@@ -794,8 +796,8 @@ export function insertStoryRelation(
     relation.visibility ?? "public",
     relation.intensity ?? 1,
     relation.sourceEventId ?? null,
-    now,
-    now,
+    relation.createdAt ?? now,
+    relation.updatedAt ?? now,
   );
 }
 
