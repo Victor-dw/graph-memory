@@ -139,7 +139,6 @@ Included in Phase 3:
 
 - series directories and series metadata
 - default continuation from the latest run in a series
-- explicit continuation from a chosen run
 - explicit branching from a chosen run into a child series
 - stable lineage metadata between series and runs
 - a dedicated high-level CLI for continuous novel production
@@ -192,6 +191,8 @@ Responsibilities:
 - append completed run entries
 - record branch lineage
 - track latest run id
+- track run status transitions
+- track series-global chapter totals
 
 Keep this pure and focused on series metadata structure.
 
@@ -201,6 +202,7 @@ New module for path resolution.
 
 Responsibilities:
 
+- resolve the series root path
 - resolve `series/<series-id>/`
 - resolve `series/<series-id>/runs/<run-id>/`
 - derive child branch series ids
@@ -266,6 +268,9 @@ At minimum:
 
 - `schemaVersion`
 - `seriesId`
+- `type`
+  - `mainline`
+  - `alternate`
 - `mode`
   - `root`
   - `branch`
@@ -275,6 +280,7 @@ At minimum:
 - `branchedFromRunId` if branched
 - `latestRunId`
 - `runCount`
+- `totalChapterCount`
 - `runs`
   - ordered list of run summaries
 
@@ -286,7 +292,33 @@ Each run summary should include:
 - `turnCount`
 - `chapterCount`
 - `path`
+- `status`
+  - `running`
+  - `success`
+  - `failed`
+- `seriesChapterStart`
+- `seriesChapterEnd`
 - `continuedFromRunId` if applicable
+
+Only runs with `status=success` may become `latestRunId`.
+Failed or partial runs must remain visible for diagnostics but must not advance the canonical continuation pointer.
+
+### Child series naming
+
+Child series ids should be readable and stable for humans browsing the filesystem.
+
+Recommended rule:
+
+- keep the directory series id short, for example `<parent-series-id>-branch-01`
+- store full lineage detail in metadata rather than encoding everything into the folder name
+
+Required lineage fields:
+
+- `parentSeriesId`
+- `branchedFromRunId`
+- `createdAt`
+
+This keeps the filesystem readable while still making branches fully traceable.
 
 ### Run bundle manifest additions
 
@@ -342,6 +374,10 @@ Explicit behavior:
 - record lineage in both the child series metadata and the new run manifest
 
 Branch mode should not mutate the source series.
+
+CLI rule:
+
+- `--mode=branch` requires `--from-run`
 
 ## Rehydration Strategy
 
@@ -417,13 +453,14 @@ This should create a child series rather than appending to `my-mainline`.
 ### Suggested arguments
 
 - `--series=<series-id>`
+- `--series-root=<path>`
 - `--mode=continue|branch`
 - `--from-run=<run-id>`
 - `--turns=<n>`
 - `--output-dir=<path>`
 - `--stub-model`
 
-The Phase 3 CLI should default its root output area to something like:
+The Phase 3 CLI should default its series root area to:
 
 ```text
 ./series
@@ -434,6 +471,8 @@ so the resulting series layout becomes:
 ```text
 ./series/<series-id>/runs/<run-id>/
 ```
+
+`--series-root` should override that default so multiple novel projects can keep separate series trees.
 
 ### Reset semantics
 
@@ -455,6 +494,15 @@ If `--from-run` is provided but cannot be found:
 
 - fail clearly
 - do not create a partial new run
+
+### Invalid mode/argument combinations
+
+If the caller passes:
+
+- `--mode=branch` without `--from-run`
+- `--mode=continue` with a non-latest `--from-run`
+
+the CLI should fail clearly before any restore or execution work begins.
 
 ### Corrupt source bundle
 
@@ -488,13 +536,16 @@ Verify:
 
 - root series creation
 - latest run tracking
+- latest run ignores failed runs
 - child series lineage metadata
+- total chapter count updates across successful runs
 
 ### 2. Restore tests
 
 Verify:
 
 - a run’s exported `final-world.json` can rehydrate the runtime DB
+- a run’s exported `final-beliefs.json` can rehydrate subjective belief state
 - a restored director state is reused by the next run
 
 ### 3. CLI integration tests
@@ -503,7 +554,9 @@ Verify:
 
 - `continue` creates a second run in the same series
 - default continuation picks the latest run
+- `continue` rejects a non-latest `--from-run`
 - `branch` creates a child series
+- `branch` requires `--from-run`
 - branch does not mutate the source series
 
 ### 4. End-to-end continuity tests
@@ -530,6 +583,8 @@ Phase 3 is complete when:
 - the system can branch from an earlier run into a child series
 - each continued or branched run still exports a complete run bundle
 - lineage is readable from the filesystem alone
+- failed runs do not become the latest continuation point
+- series-global chapter totals advance only on successful runs
 - README and CLI behavior make the long-form workflow understandable without code reading
 
 ## Recommended Next Step
