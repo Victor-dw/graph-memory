@@ -235,10 +235,16 @@ npm run story:series -- --series=my-mainline --mode=branch --from-run=<run-id> -
 
 Branch mode creates a child series such as `my-mainline-branch-01` and keeps the source series unchanged.
 
-`story:series` uses `--series-root` instead of `--output-dir`. The bundle root is always:
+`story:series` uses `--series-root` instead of `--output-dir`. In `continue` mode the bundle root is:
 
 ```text
 <series-root>/<series-id>/runs/<run-id>/
+```
+
+In `branch` mode, the run bundle is written under the generated child series id:
+
+```text
+<series-root>/<generated-child-series-id>/runs/<run-id>/
 ```
 
 ### Environment variables

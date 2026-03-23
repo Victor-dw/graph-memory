@@ -207,11 +207,16 @@ function assertValidSeriesMetadata(value: unknown): asserts value is StorySeries
   }
   requireString(metadata.createdAt);
   requireString(metadata.updatedAt);
-  if (metadata.parentSeriesId !== undefined) {
+  if (metadata.mode === "branch") {
     assertSafePathSegment(requireString(metadata.parentSeriesId));
-  }
-  if (metadata.branchedFromRunId !== undefined) {
     assertSafePathSegment(requireString(metadata.branchedFromRunId));
+  } else {
+    if (metadata.parentSeriesId !== undefined) {
+      assertSafePathSegment(requireString(metadata.parentSeriesId));
+    }
+    if (metadata.branchedFromRunId !== undefined) {
+      assertSafePathSegment(requireString(metadata.branchedFromRunId));
+    }
   }
   if (metadata.latestRunId !== null && metadata.latestRunId !== undefined) {
     assertSafePathSegment(requireString(metadata.latestRunId));
@@ -228,6 +233,7 @@ function assertValidSeriesMetadata(value: unknown): asserts value is StorySeries
   const runIds = new Set<string>();
   let successfulRunIdSeen = metadata.latestRunId === null;
   let lastSuccessfulRunId: string | null = null;
+  let expectedTotalChapterCount = 0;
   for (const run of metadata.runs) {
     assertValidRunRecord(run);
     if (runIds.has(run.runId)) {
@@ -235,13 +241,31 @@ function assertValidSeriesMetadata(value: unknown): asserts value is StorySeries
     }
     runIds.add(run.runId);
     if (run.status === "success") {
+      const expectedSeriesChapterStart = run.chapterCount > 0
+        ? expectedTotalChapterCount + 1
+        : undefined;
+      const expectedSeriesChapterEnd = expectedSeriesChapterStart === undefined
+        ? undefined
+        : expectedSeriesChapterStart + run.chapterCount - 1;
+      if (
+        run.seriesChapterStart !== expectedSeriesChapterStart
+        || run.seriesChapterEnd !== expectedSeriesChapterEnd
+      ) {
+        throw new Error("[story-series] invalid series metadata");
+      }
+      expectedTotalChapterCount += run.chapterCount;
       lastSuccessfulRunId = run.runId;
       if (run.runId === metadata.latestRunId) {
         successfulRunIdSeen = true;
       }
+    } else if (run.seriesChapterStart !== undefined || run.seriesChapterEnd !== undefined) {
+      throw new Error("[story-series] invalid series metadata");
     }
   }
 
+  if (metadata.totalChapterCount !== expectedTotalChapterCount) {
+    throw new Error("[story-series] invalid series metadata");
+  }
   if (!successfulRunIdSeen || metadata.latestRunId !== lastSuccessfulRunId) {
     throw new Error("[story-series] invalid series metadata");
   }

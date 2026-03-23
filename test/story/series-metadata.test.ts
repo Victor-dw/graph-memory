@@ -237,6 +237,142 @@ describe("story series metadata", () => {
     }
   });
 
+  it("rejects branch metadata that omits required lineage fields", () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-meta-"));
+
+    try {
+      const seriesPath = resolveSeriesPath(seriesRoot, "mainline-a-branch-01");
+      mkdirSync(seriesPath, { recursive: true });
+      writeFileSync(path.join(seriesPath, "series.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        seriesId: "mainline-a-branch-01",
+        type: "alternate",
+        mode: "branch",
+        createdAt: "2026-03-23T03:00:00.000Z",
+        updatedAt: "2026-03-23T03:00:00.000Z",
+        latestRunId: null,
+        runCount: 0,
+        totalChapterCount: 0,
+        runs: [],
+      }, null, 2)}\n`, "utf8");
+
+      expect(() => readSeriesMetadata(seriesRoot, "mainline-a-branch-01")).toThrowError(
+        "[story-series] invalid series metadata",
+      );
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects totalChapterCount values that do not match successful run history", () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-meta-"));
+
+    try {
+      const seriesPath = resolveSeriesPath(seriesRoot, "mainline-a");
+      mkdirSync(seriesPath, { recursive: true });
+      writeFileSync(path.join(seriesPath, "series.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        seriesId: "mainline-a",
+        type: "mainline",
+        mode: "root",
+        createdAt: "2026-03-23T00:00:00.000Z",
+        updatedAt: "2026-03-23T03:00:00.000Z",
+        latestRunId: "run-002",
+        runCount: 3,
+        totalChapterCount: 99,
+        runs: [
+          {
+            runId: "run-001",
+            startedAt: "2026-03-23T01:00:00.000Z",
+            finishedAt: "2026-03-23T01:05:00.000Z",
+            turnCount: 3,
+            chapterCount: 2,
+            path: "/tmp/series/mainline-a/runs/run-001",
+            status: "success",
+            seriesChapterStart: 1,
+            seriesChapterEnd: 2,
+          },
+          {
+            runId: "run-failed",
+            startedAt: "2026-03-23T02:00:00.000Z",
+            finishedAt: "2026-03-23T02:05:00.000Z",
+            turnCount: 1,
+            chapterCount: 4,
+            path: "/tmp/series/mainline-a/runs/run-failed",
+            status: "failed",
+          },
+          {
+            runId: "run-002",
+            startedAt: "2026-03-23T03:00:00.000Z",
+            finishedAt: "2026-03-23T03:05:00.000Z",
+            turnCount: 2,
+            chapterCount: 1,
+            path: "/tmp/series/mainline-a/runs/run-002",
+            status: "success",
+            seriesChapterStart: 3,
+            seriesChapterEnd: 3,
+          },
+        ],
+      }, null, 2)}\n`, "utf8");
+
+      expect(() => readSeriesMetadata(seriesRoot, "mainline-a")).toThrowError(
+        "[story-series] invalid series metadata",
+      );
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects successful run chapter ranges that do not match cumulative chapter history", () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-meta-"));
+
+    try {
+      const seriesPath = resolveSeriesPath(seriesRoot, "mainline-a");
+      mkdirSync(seriesPath, { recursive: true });
+      writeFileSync(path.join(seriesPath, "series.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        seriesId: "mainline-a",
+        type: "mainline",
+        mode: "root",
+        createdAt: "2026-03-23T00:00:00.000Z",
+        updatedAt: "2026-03-23T03:00:00.000Z",
+        latestRunId: "run-002",
+        runCount: 2,
+        totalChapterCount: 3,
+        runs: [
+          {
+            runId: "run-001",
+            startedAt: "2026-03-23T01:00:00.000Z",
+            finishedAt: "2026-03-23T01:05:00.000Z",
+            turnCount: 3,
+            chapterCount: 2,
+            path: "/tmp/series/mainline-a/runs/run-001",
+            status: "success",
+            seriesChapterStart: 1,
+            seriesChapterEnd: 2,
+          },
+          {
+            runId: "run-002",
+            startedAt: "2026-03-23T03:00:00.000Z",
+            finishedAt: "2026-03-23T03:05:00.000Z",
+            turnCount: 2,
+            chapterCount: 1,
+            path: "/tmp/series/mainline-a/runs/run-002",
+            status: "success",
+            seriesChapterStart: 4,
+            seriesChapterEnd: 4,
+          },
+        ],
+      }, null, 2)}\n`, "utf8");
+
+      expect(() => readSeriesMetadata(seriesRoot, "mainline-a")).toThrowError(
+        "[story-series] invalid series metadata",
+      );
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects syntactically corrupted series metadata files", () => {
     const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-meta-"));
 

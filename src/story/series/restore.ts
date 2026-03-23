@@ -11,7 +11,7 @@ export async function restoreSeriesRun(
   const beliefsPath = path.join(input.bundlePath, "state", "final-beliefs.json");
   const directorPath = path.join(input.bundlePath, "state", "final-director.json");
   const world = readRequiredJson(worldPath, isValidWorldSnapshot);
-  const beliefs = readRequiredJson(beliefsPath, (value) => Array.isArray(value));
+  const beliefs = readRequiredJson(beliefsPath, isValidBeliefSnapshot);
   const director = readRequiredJson(directorPath, isValidDirectorSnapshot);
 
   restoreStorySnapshot(db, {
@@ -49,16 +49,114 @@ function parseJsonFile(filePath: string): unknown {
 }
 
 function isValidWorldSnapshot(value: unknown): boolean {
-  return Boolean(
-    value
-    && typeof value === "object"
-    && Array.isArray((value as { entities?: unknown[] }).entities)
-    && Array.isArray((value as { relations?: unknown[] }).relations)
-    && Array.isArray((value as { activeThreads?: unknown[] }).activeThreads)
-    && Array.isArray((value as { narrativeSignals?: unknown[] }).narrativeSignals),
-  );
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Array.isArray(value.entities)
+    && value.entities.every(isValidWorldEntityRecord)
+    && Array.isArray(value.relations)
+    && value.relations.every(isValidWorldRelationRecord)
+    && Array.isArray(value.activeThreads)
+    && value.activeThreads.every(isValidThreadRecord)
+    && Array.isArray(value.narrativeSignals)
+    && value.narrativeSignals.every(isValidNarrativeSignalRecord);
 }
 
 function isValidDirectorSnapshot(value: unknown): boolean {
-  return Boolean(value && typeof value === "object");
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Array.isArray(value.activeThreads)
+    && value.activeThreads.every(isValidThreadRecord)
+    && Array.isArray(value.unresolvedSecrets)
+    && value.unresolvedSecrets.every(isValidNarrativeSignalRecord)
+    && Array.isArray(value.activeTensions)
+    && value.activeTensions.every(isValidNarrativeSignalRecord)
+    && Array.isArray(value.payoffCandidates)
+    && value.payoffCandidates.every(isValidNarrativeSignalRecord)
+    && Array.isArray(value.ensembleHeat)
+    && value.ensembleHeat.every(isValidEnsembleHeatEntry)
+    && Array.isArray(value.recentPovIds)
+    && value.recentPovIds.every((entry) => typeof entry === "string");
+}
+
+function isValidBeliefSnapshot(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isValidBeliefRecord);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isValidWorldEntityRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.kind === "string"
+    && typeof value.name === "string"
+    && isEntityPayloadRecord(value.payload);
+}
+
+function isEntityPayloadRecord(value: unknown): value is { id: string; name: string } {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.name === "string";
+}
+
+function isValidWorldRelationRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.fromId === "string"
+    && typeof value.relation === "string"
+    && typeof value.toId === "string"
+    && typeof value.visibility === "string"
+    && typeof value.intensity === "number"
+    && isOptionalString(value.sourceEventId)
+    && typeof value.createdAt === "number"
+    && typeof value.updatedAt === "number";
+}
+
+function isValidThreadRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.name === "string"
+    && (value.status === "active" || value.status === "paused" || value.status === "resolved");
+}
+
+function isValidNarrativeSignalRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.kind === "string"
+    && typeof value.subjectId === "string"
+    && isOptionalString(value.relatedId)
+    && isOptionalNumber(value.weight)
+    && typeof value.payloadJson === "string"
+    && isOptionalString(value.status)
+    && isOptionalNumber(value.createdAt)
+    && isOptionalNumber(value.updatedAt);
+}
+
+function isValidEnsembleHeatEntry(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.entityId === "string"
+    && typeof value.heat === "number";
+}
+
+function isValidBeliefRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.actorId === "string"
+    && typeof value.subjectId === "string"
+    && typeof value.predicate === "string"
+    && typeof value.objectId === "string"
+    && typeof value.confidence === "number"
+    && (value.actorKind === "character" || value.actorKind === "faction");
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || typeof value === "number";
 }
