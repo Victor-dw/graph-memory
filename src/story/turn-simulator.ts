@@ -5,6 +5,7 @@ import { rankFactionActions } from "./decision/faction-engine.ts";
 import { propagateBeliefsFromEvents } from "./beliefs.ts";
 import {
   appendStoryLedgerEvent,
+  getThreadState,
   insertStoryEvent,
   upsertProjectedRelation,
   insertStoryTurn,
@@ -13,8 +14,14 @@ import {
   type StoryBelief,
   type StoryNarrativeSignal,
   type StoryResolvedEvent,
+  upsertThreadState,
   upsertStoryNarrativeSignal,
 } from "../store/store.ts";
+import {
+  advanceThreadStateFromSignals,
+  deriveThreadStateSignal,
+  type ThreadStateSignal,
+} from "./memory/thread-state.ts";
 import type { StoryModelClient } from "./runtime/model-client.ts";
 import {
   applyResolvedEvents,
@@ -88,6 +95,7 @@ function persistTurnAtomically(
   db.exec("BEGIN");
   try {
     const updates = applyResolvedEvents(db, events);
+    const threadStateSignals: ThreadStateSignal[] = [];
     insertStoryTurn(db, {
       turnNumber,
       summary: summarizeResolvedEvents(events),
@@ -105,6 +113,10 @@ function persistTurnAtomically(
         visibility: event.visibility ?? "public",
         payloadJson: JSON.stringify(event.payload),
       });
+      const threadStateSignal = deriveThreadStateSignal(event, ledgerEventId);
+      if (threadStateSignal) {
+        threadStateSignals.push(threadStateSignal);
+      }
 
       const relation = extractBeliefRelationFromEvent(event);
       if (!relation || relation.relation === "EXECUTES") {
@@ -122,6 +134,13 @@ function persistTurnAtomically(
     }
     for (const signal of narrativeSignals) {
       upsertStoryNarrativeSignal(db, signal);
+    }
+    const threadUpdates = advanceThreadStateFromSignals(
+      threadStateSignals,
+      (threadId) => getThreadState(db, threadId),
+    );
+    for (const threadUpdate of threadUpdates) {
+      upsertThreadState(db, threadUpdate);
     }
     propagateBeliefsFromEvents(db, events);
     db.exec("COMMIT");

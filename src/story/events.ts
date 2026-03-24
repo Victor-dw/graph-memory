@@ -12,6 +12,8 @@ export interface StoryStateChange {
 
 interface EventPayloadWithBelief {
   artifactId?: string;
+  threadId?: string;
+  threadIds?: string[];
   contenderIds?: string[];
   conflictId?: string;
   subjectId?: string;
@@ -57,6 +59,7 @@ export function resolveActionConflicts(
   for (const [artifactId, contenders] of artifactBuckets) {
     if (contenders.length < 2) continue;
     const conflictId = buildConflictAggregateId(artifactId, turnNumber);
+    const threadId = inferThreadIdFromArtifact(artifactId);
     const priorConflictCount = recentArtifactConflictCounts[artifactId] ?? 0;
     const conflictEventType = priorConflictCount >= 2 ? "artifact-showdown" : "artifact-conflict";
     for (const contender of contenders) {
@@ -72,6 +75,7 @@ export function resolveActionConflicts(
         : `${artifactId} becomes the center of a multi-party contest.`,
       payload: {
         artifactId,
+        threadId,
         conflictId,
         contenderIds,
         subjectId: artifactId,
@@ -172,6 +176,11 @@ function inferTargetArtifactId(action: StoryAction): string | undefined {
   return undefined;
 }
 
+function inferThreadIdFromArtifact(artifactId: string): string {
+  if (artifactId === "a-ember-seal") return "t-secret-realm";
+  return `t-artifact-${artifactId}`;
+}
+
 function buildConflictAggregateId(artifactId: string, turnNumber: number): string {
   // Keep conflict aggregate ids stable across turns so repeated contention can accumulate and escalate.
   void turnNumber;
@@ -191,6 +200,7 @@ function createResolvedEventFromAction(
       summary: `${action.actorId} moves to secure the Ember Seal.`,
       payload: {
         artifactId: action.targetArtifactId ?? "a-ember-seal",
+        threadId: inferThreadIdFromArtifact(action.targetArtifactId ?? "a-ember-seal"),
         subjectId: action.targetArtifactId ?? "a-ember-seal",
         predicate: "SOUGHT_BY",
         objectId: action.actorId,

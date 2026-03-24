@@ -688,9 +688,12 @@ export interface StoryNarrativeSignal {
   updatedAt?: number;
 }
 
+export const STORY_THREAD_STAGES = ["opening", "tightening", "showdown", "aftermath"] as const;
+export type StoryThreadStage = (typeof STORY_THREAD_STAGES)[number];
+
 export interface StoryThreadStateRecord {
   threadId: string;
-  stage: string;
+  stage: StoryThreadStage;
   urgency: number;
   pressure: number;
   focusIdentityId?: string | null;
@@ -699,6 +702,10 @@ export interface StoryThreadStateRecord {
   blockingFactorsJson?: string;
   pendingPayoffsJson?: string;
   updatedAt?: number;
+}
+
+function normalizeThreadStage(stage: string): StoryThreadStage {
+  return STORY_THREAD_STAGES.includes(stage as StoryThreadStage) ? (stage as StoryThreadStage) : "opening";
 }
 
 export function upsertThreadState(
@@ -724,7 +731,7 @@ export function upsertThreadState(
       updated_at = excluded.updated_at
   `).run(
     record.threadId,
-    record.stage,
+    normalizeThreadStage(record.stage),
     record.urgency,
     record.pressure,
     record.focusIdentityId ?? null,
@@ -759,7 +766,7 @@ export function getThreadState(
 
   return {
     threadId: row.thread_id,
-    stage: row.stage,
+    stage: normalizeThreadStage(row.stage),
     urgency: row.urgency,
     pressure: row.pressure,
     focusIdentityId: row.focus_identity_id,

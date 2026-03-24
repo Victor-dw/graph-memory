@@ -108,10 +108,16 @@ describe("story turn simulator", () => {
         FROM story_relations
         WHERE source_event_id LIKE 'sev-3-%'
       `).get() as { c: number }).c;
+      const threadStateCount = (db.prepare(`
+        SELECT COUNT(*) as c
+        FROM story_thread_state
+        WHERE last_advanced_turn = 3
+      `).get() as { c: number }).c;
 
       expect(turnCount).toBe(0);
       expect(eventCount).toBe(0);
       expect(relationCount).toBe(0);
+      expect(threadStateCount).toBe(0);
     } finally {
       db.close();
     }
@@ -356,9 +362,29 @@ describe("story turn simulator", () => {
         FROM story_events
         WHERE turn_number = 10 AND type = 'artifact-showdown'
       `).get() as { type: string; payload: string } | undefined;
+      const threadStateRow = db.prepare(`
+        SELECT ts.stage, ts.last_advanced_turn, ts.last_event_id, el.event_type
+        FROM story_thread_state ts
+        LEFT JOIN story_event_ledger el ON el.id = ts.last_event_id
+        WHERE ts.thread_id = 't-secret-realm'
+      `).get() as
+        | { stage: string; last_advanced_turn: number; last_event_id: string; event_type: string }
+        | undefined;
+      const threadStateRowCount = (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM story_thread_state
+        WHERE thread_id = 't-secret-realm'
+      `).get() as { c: number }).c;
 
       expect(showdownRow?.type).toBe("artifact-showdown");
       expect(showdownRow?.payload).toContain("\"conflictId\":\"conflict:a-ember-seal\"");
+      expect(threadStateRowCount).toBe(1);
+      expect(threadStateRow).toEqual({
+        stage: "showdown",
+        last_advanced_turn: 10,
+        last_event_id: expect.stringContaining("sle-sev-10-"),
+        event_type: "artifact-showdown",
+      });
     } finally {
       db.close();
     }
