@@ -206,6 +206,65 @@ export function createTestDb(): DatabaseSyncInstance {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS story_identities (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      payload_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS story_identity_aliases (
+      id TEXT PRIMARY KEY,
+      identity_id TEXT NOT NULL REFERENCES story_identities(id),
+      alias TEXT NOT NULL,
+      alias_type TEXT NOT NULL,
+      valid_from_turn INTEGER,
+      valid_to_turn INTEGER,
+      is_primary_public INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS story_event_ledger (
+      id TEXT PRIMARY KEY,
+      turn_number INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      event_phase TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      visibility TEXT NOT NULL DEFAULT 'public',
+      payload_json TEXT NOT NULL,
+      caused_by_event_id TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS story_state_relations (
+      id TEXT PRIMARY KEY,
+      from_identity_id TEXT NOT NULL REFERENCES story_identities(id),
+      relation TEXT NOT NULL,
+      to_identity_id TEXT NOT NULL REFERENCES story_identities(id),
+      visibility TEXT NOT NULL DEFAULT 'public',
+      strength REAL NOT NULL DEFAULT 1,
+      derived_from_event_id TEXT,
+      valid_from_turn INTEGER,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS story_thread_state (
+      thread_id TEXT PRIMARY KEY,
+      stage TEXT NOT NULL,
+      urgency REAL NOT NULL,
+      pressure REAL NOT NULL,
+      focus_identity_id TEXT,
+      last_advanced_turn INTEGER,
+      last_event_id TEXT,
+      blocking_factors_json TEXT NOT NULL DEFAULT '[]',
+      pending_payoffs_json TEXT NOT NULL DEFAULT '[]',
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS ix_story_entities_kind_status ON story_entities(kind, status);
     CREATE INDEX IF NOT EXISTS ix_story_relations_from ON story_relations(from_id);
     CREATE INDEX IF NOT EXISTS ix_story_relations_to ON story_relations(to_id);
@@ -214,6 +273,15 @@ export function createTestDb(): DatabaseSyncInstance {
       ON story_beliefs(actor_id, subject_id, predicate);
     CREATE INDEX IF NOT EXISTS ix_story_narrative_signals_subject_kind_status
       ON story_narrative_signals(subject_id, kind, status);
+    CREATE INDEX IF NOT EXISTS ix_story_identities_kind_status ON story_identities(kind, status);
+    CREATE INDEX IF NOT EXISTS ix_story_event_ledger_turn ON story_event_ledger(turn_number);
+    CREATE INDEX IF NOT EXISTS ix_story_event_ledger_cause ON story_event_ledger(caused_by_event_id);
+    CREATE INDEX IF NOT EXISTS ix_story_state_relations_from_to ON story_state_relations(from_identity_id, to_identity_id);
+    CREATE INDEX IF NOT EXISTS ix_story_state_relations_relation ON story_state_relations(relation);
+    CREATE INDEX IF NOT EXISTS ix_story_thread_state_focus ON story_thread_state(focus_identity_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_story_identity_aliases_identity_alias_type
+      ON story_identity_aliases(identity_id, alias, alias_type);
+    CREATE INDEX IF NOT EXISTS ix_story_identity_aliases_identity ON story_identity_aliases(identity_id);
   `);
 
   return db;

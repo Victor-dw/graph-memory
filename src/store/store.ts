@@ -9,6 +9,10 @@ import { DatabaseSync, type DatabaseSyncInstance } from "@photostructure/sqlite"
 import { createHash } from "crypto";
 import type { GmNode, GmEdge, EdgeType, NodeType, Signal } from "../types.ts";
 
+export { insertStoryIdentity } from "../story/memory/schema-v2.ts";
+export { appendStoryLedgerEvent } from "../story/memory/event-ledger.ts";
+export { upsertProjectedRelation } from "../story/memory/projection.ts";
+
 // ─── 工具 ─────────────────────────────────────────────────────
 
 function uid(p: string): string {
@@ -682,6 +686,89 @@ export interface StoryNarrativeSignal {
   status?: string;
   createdAt?: number;
   updatedAt?: number;
+}
+
+export interface StoryThreadStateRecord {
+  threadId: string;
+  stage: string;
+  urgency: number;
+  pressure: number;
+  focusIdentityId?: string | null;
+  lastAdvancedTurn?: number | null;
+  lastEventId?: string | null;
+  blockingFactorsJson?: string;
+  pendingPayoffsJson?: string;
+  updatedAt?: number;
+}
+
+export function upsertThreadState(
+  db: DatabaseSyncInstance,
+  record: StoryThreadStateRecord,
+): void {
+  const now = record.updatedAt ?? Date.now();
+  db.prepare(`
+    INSERT INTO story_thread_state (
+      thread_id, stage, urgency, pressure,
+      focus_identity_id, last_advanced_turn, last_event_id,
+      blocking_factors_json, pending_payoffs_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(thread_id) DO UPDATE SET
+      stage = excluded.stage,
+      urgency = excluded.urgency,
+      pressure = excluded.pressure,
+      focus_identity_id = excluded.focus_identity_id,
+      last_advanced_turn = excluded.last_advanced_turn,
+      last_event_id = excluded.last_event_id,
+      blocking_factors_json = excluded.blocking_factors_json,
+      pending_payoffs_json = excluded.pending_payoffs_json,
+      updated_at = excluded.updated_at
+  `).run(
+    record.threadId,
+    record.stage,
+    record.urgency,
+    record.pressure,
+    record.focusIdentityId ?? null,
+    record.lastAdvancedTurn ?? null,
+    record.lastEventId ?? null,
+    record.blockingFactorsJson ?? "[]",
+    record.pendingPayoffsJson ?? "[]",
+    now,
+  );
+}
+
+export function getThreadState(
+  db: DatabaseSyncInstance,
+  threadId: string,
+): StoryThreadStateRecord | null {
+  const row = db
+    .prepare("SELECT * FROM story_thread_state WHERE thread_id=?")
+    .get(threadId) as {
+      thread_id: string;
+      stage: string;
+      urgency: number;
+      pressure: number;
+      focus_identity_id: string | null;
+      last_advanced_turn: number | null;
+      last_event_id: string | null;
+      blocking_factors_json: string;
+      pending_payoffs_json: string;
+      updated_at: number;
+    } | null;
+
+  if (!row) return null;
+
+  return {
+    threadId: row.thread_id,
+    stage: row.stage,
+    urgency: row.urgency,
+    pressure: row.pressure,
+    focusIdentityId: row.focus_identity_id,
+    lastAdvancedTurn: row.last_advanced_turn,
+    lastEventId: row.last_event_id,
+    blockingFactorsJson: row.blocking_factors_json,
+    pendingPayoffsJson: row.pending_payoffs_json,
+    updatedAt: row.updated_at,
+  };
 }
 
 export function insertStoryEntities<T extends { id: string; name: string }>(
