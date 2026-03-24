@@ -8,6 +8,7 @@ import {
   upsertProjectedRelation,
   upsertThreadState,
 } from "../../src/store/store.ts";
+import type { StoryIdentityRecord } from "../../src/story/memory/schema-v2.ts";
 import { existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -50,7 +51,7 @@ describe("story schema v2 store helpers", () => {
 
   it("keeps identity aliases unique when re-inserting the same identity", () => {
     const db = createTestDb();
-    const canonical = {
+    const canonical: StoryIdentityRecord = {
       id: "c-su-wan",
       kind: "character",
       canonicalName: "Su Wan",
