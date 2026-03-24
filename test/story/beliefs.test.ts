@@ -108,7 +108,12 @@ describe("story beliefs", () => {
       const suWanBeliefs = listBeliefsForActor(db, "c-su-wan");
       const cloudSwordBeliefs = listBeliefsForActor(db, "f-cloud-sword");
 
-      expect(liYaoBeliefs).toHaveLength(1);
+      expect(liYaoBeliefs.some((belief) =>
+        belief.predicate === "OWNS" && belief.objectId === "c-shen-mo"
+      )).toBe(true);
+      expect(liYaoBeliefs.some((belief) =>
+        belief.predicate === "BLOODLINE" && belief.objectId === "ancient"
+      )).toBe(true);
       expect(shenMoBeliefs.some((belief) =>
         belief.predicate === "BLOODLINE" && belief.objectId === "ancient"
       )).toBe(true);
@@ -119,12 +124,15 @@ describe("story beliefs", () => {
     }
   });
 
-  it("defaults missing visibility to public propagation", () => {
+  it("defaults missing visibility to targeted recipients instead of world-wide broadcast", () => {
     const db = createTestDb();
     try {
       insertStoryEntities(
         db,
-        [{ id: "c-li-yao", name: "Li Yao" }],
+        [
+          { id: "c-li-yao", name: "Li Yao" },
+          { id: "c-shen-mo", name: "Shen Mo" },
+        ],
         "character",
       );
       insertStoryEntities(
@@ -143,8 +151,96 @@ describe("story beliefs", () => {
         },
       ]);
 
+      expect(listBeliefsForActor(db, "c-shen-mo")).toHaveLength(1);
+      expect(listBeliefsForActor(db, "c-li-yao")).toHaveLength(0);
+      expect(listBeliefsForActor(db, "f-cloud-sword")).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not mirror unrelated public events into all actors and factions", () => {
+    const db = createTestDb();
+    try {
+      insertStoryEntities(
+        db,
+        [
+          { id: "c-li-yao", name: "Li Yao" },
+          { id: "c-shen-mo", name: "Shen Mo" },
+        ],
+        "character",
+      );
+      insertStoryEntities(
+        db,
+        [
+          { id: "f-cloud-sword", name: "Cloud Sword Sect" },
+          { id: "f-black-river", name: "Black River Hall" },
+        ],
+        "faction",
+      );
+
+      propagateBeliefsFromEvents(db, [
+        {
+          id: "e-unrelated-public",
+          turnNumber: 1,
+          type: "artifact-conflict",
+          summary: "Conflict with no actor/faction recipients in payload",
+          visibility: "public",
+          payload: {
+            subjectId: "a-ember-seal",
+            predicate: "IN_CONFLICT",
+            objectId: "conflict:a-ember-seal",
+          },
+        },
+      ]);
+
+      expect(listBeliefsForActor(db, "c-li-yao")).toHaveLength(0);
+      expect(listBeliefsForActor(db, "c-shen-mo")).toHaveLength(0);
+      expect(listBeliefsForActor(db, "f-cloud-sword")).toHaveLength(0);
+      expect(listBeliefsForActor(db, "f-black-river")).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps private propagation limited to explicit observers and participating holders", () => {
+    const db = createTestDb();
+    try {
+      insertStoryEntities(
+        db,
+        [
+          { id: "c-li-yao", name: "Li Yao" },
+          { id: "c-shen-mo", name: "Shen Mo" },
+          { id: "c-su-wan", name: "Su Wan" },
+        ],
+        "character",
+      );
+      insertStoryEntities(
+        db,
+        [{ id: "f-cloud-sword", name: "Cloud Sword Sect" }],
+        "faction",
+      );
+
+      propagateBeliefsFromEvents(db, [
+        {
+          id: "e-private-participants",
+          turnNumber: 1,
+          type: "secret",
+          summary: "Private event with participants",
+          visibility: "private",
+          observers: ["c-shen-mo"],
+          payload: {
+            subjectId: "c-li-yao",
+            predicate: "SECRET_PACT",
+            objectId: "f-cloud-sword",
+          },
+        },
+      ]);
+
+      expect(listBeliefsForActor(db, "c-shen-mo")).toHaveLength(1);
       expect(listBeliefsForActor(db, "c-li-yao")).toHaveLength(1);
       expect(listBeliefsForActor(db, "f-cloud-sword")).toHaveLength(1);
+      expect(listBeliefsForActor(db, "c-su-wan")).toHaveLength(0);
     } finally {
       db.close();
     }
@@ -162,6 +258,7 @@ describe("story beliefs", () => {
           turnNumber: 1,
           type: "claim",
           summary: "Runtime event",
+          observers: ["c-li-yao"],
           payload: { subjectId: "a-ember-seal", predicate: "OWNS", objectId: "c-shen-mo" },
         },
       ]);

@@ -10,9 +10,10 @@ import {
 } from "../store/store.ts";
 
 interface BeliefEventPayload {
-  subjectId: string;
-  predicate: string;
-  objectId: string;
+  subjectId?: string;
+  predicate?: string;
+  objectId?: string;
+  contenderIds?: string[];
   confidence?: number;
 }
 
@@ -65,12 +66,40 @@ export function upsertBeliefFromEvent(db: DatabaseSyncInstance, actorId: string,
   });
 }
 
+function collectBeliefRecipients(event: StoryResolvedEvent, knownHolders: Set<string>): string[] {
+  const recipients = new Set<string>();
+  const payload = event.payload as BeliefEventPayload | null;
+
+  for (const observerId of event.observers ?? []) {
+    if (knownHolders.has(observerId)) {
+      recipients.add(observerId);
+    }
+  }
+
+  if (typeof payload?.subjectId === "string" && knownHolders.has(payload.subjectId)) {
+    recipients.add(payload.subjectId);
+  }
+  if (typeof payload?.objectId === "string" && knownHolders.has(payload.objectId)) {
+    recipients.add(payload.objectId);
+  }
+  for (const contenderId of payload?.contenderIds ?? []) {
+    if (knownHolders.has(contenderId)) {
+      recipients.add(contenderId);
+    }
+  }
+
+  return [...recipients];
+}
+
 export function propagateBeliefsFromEvents(db: DatabaseSyncInstance, events: StoryResolvedEvent[]): void {
+  const knownHolders = new Set<string>([
+    ...listObservableActors(db),
+    ...listObservableFactions(db),
+  ]);
+
   for (const event of events) {
-    const observers = event.visibility !== "private"
-      ? [...listObservableActors(db), ...listObservableFactions(db)]
-      : (event.observers ?? []);
-    for (const actorId of observers) {
+    const recipients = collectBeliefRecipients(event, knownHolders);
+    for (const actorId of recipients) {
       upsertBeliefFromEvent(db, actorId, event);
     }
   }
