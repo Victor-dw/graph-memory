@@ -5,6 +5,7 @@ import type { SeedWorld, StoryCharacter, StoryThread } from "./types.ts";
 import { propagateBeliefsFromEvents } from "./beliefs.ts";
 import type { StoryWorldSnapshot } from "./memory/consistency.ts";
 import {
+  insertStoryIdentity,
   insertStoryEntities,
   insertStoryEvent,
   type StoryBelief,
@@ -13,8 +14,11 @@ import {
   listStoryEntitiesByKind,
   type StoryNarrativeSignal,
   type StoryResolvedEvent,
+  type StoryThreadStateRecord,
   type StoryTurnRecord,
+  upsertProjectedRelation,
   upsertStoryNarrativeSignal,
+  upsertThreadState,
 } from "../store/store.ts";
 
 export interface StoryWorldState {
@@ -218,6 +222,10 @@ export function restoreStorySnapshot(
       insertStoryEntities(db, entities, kind as "character" | "faction" | "location" | "artifact" | "thread" | "rule");
     }
 
+    for (const identity of snapshot.world.identities ?? []) {
+      insertStoryIdentity(db, identity);
+    }
+
     for (const relation of snapshot.world.relations) {
       insertStoryRelation(db, {
         id: relation.id,
@@ -230,6 +238,24 @@ export function restoreStorySnapshot(
         createdAt: relation.createdAt,
         updatedAt: relation.updatedAt,
       });
+    }
+
+    for (const relation of toProjectedSnapshotRelations(snapshot.world)) {
+      upsertProjectedRelation(db, {
+        id: relation.id,
+        fromIdentityId: relation.fromIdentityId,
+        relation: relation.relation,
+        toIdentityId: relation.toIdentityId,
+        visibility: relation.visibility === "private" ? "private" : "public",
+        strength: relation.strength,
+        derivedFromEventId: relation.derivedFromEventId,
+        validFromTurn: relation.validFromTurn,
+        updatedAt: relation.updatedAt,
+      });
+    }
+
+    for (const threadState of toSnapshotThreadState(snapshot.world)) {
+      upsertThreadState(db, threadState);
     }
 
     for (const signal of snapshot.world.narrativeSignals) {
@@ -332,15 +358,72 @@ function clearPersistedStorySnapshot(db: DatabaseSyncInstance): void {
   const tables = [
     "story_turns",
     "story_events",
+    "story_event_ledger",
     "story_beliefs",
     "story_chapters",
     "story_director_state",
     "story_narrative_signals",
+    "story_state_relations",
+    "story_thread_state",
     "story_relations",
+    "story_identity_aliases",
+    "story_identities",
     "story_entities",
   ] as const;
 
   for (const table of tables) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
+}
+
+function toProjectedSnapshotRelations(world: StoryRestoreSnapshot["world"]) {
+  if ((world.projectedRelations?.length ?? 0) > 0) {
+    return world.projectedRelations ?? [];
+  }
+
+  return world.relations.map((relation) => ({
+    id: relation.id,
+    fromIdentityId: relation.fromId,
+    relation: relation.relation,
+    toIdentityId: relation.toId,
+    visibility: relation.visibility,
+    strength: relation.intensity,
+    derivedFromEventId: relation.sourceEventId,
+    validFromTurn: relation.validFromTurn,
+    updatedAt: relation.updatedAt,
+  }));
+}
+
+function toSnapshotThreadState(world: StoryRestoreSnapshot["world"]): StoryThreadStateRecord[] {
+  if ((world.threadState?.length ?? 0) > 0) {
+    return world.threadState ?? [];
+  }
+
+  return world.activeThreads.flatMap((thread) => {
+    const snapshotThread = thread as StoryThread & Partial<StoryThreadStateRecord>;
+    const hasThreadState = typeof snapshotThread.stage === "string"
+      || typeof snapshotThread.urgency === "number"
+      || typeof snapshotThread.pressure === "number"
+      || typeof snapshotThread.focusIdentityId === "string"
+      || typeof snapshotThread.lastAdvancedTurn === "number"
+      || typeof snapshotThread.lastEventId === "string"
+      || typeof snapshotThread.blockingFactorsJson === "string"
+      || typeof snapshotThread.pendingPayoffsJson === "string";
+    if (!hasThreadState) {
+      return [];
+    }
+
+    return [{
+      threadId: snapshotThread.id,
+      stage: snapshotThread.stage ?? "opening",
+      urgency: snapshotThread.urgency ?? 0,
+      pressure: snapshotThread.pressure ?? 0,
+      focusIdentityId: snapshotThread.focusIdentityId ?? null,
+      lastAdvancedTurn: snapshotThread.lastAdvancedTurn ?? null,
+      lastEventId: snapshotThread.lastEventId ?? null,
+      blockingFactorsJson: snapshotThread.blockingFactorsJson ?? "[]",
+      pendingPayoffsJson: snapshotThread.pendingPayoffsJson ?? "[]",
+      updatedAt: Date.now(),
+    }];
+  });
 }

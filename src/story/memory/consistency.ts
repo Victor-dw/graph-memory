@@ -1,6 +1,8 @@
 import type { DatabaseSyncInstance } from "@photostructure/sqlite";
 import type { StoryModelClient } from "../runtime/model-client.ts";
 import type { StoryThread } from "../types.ts";
+import type { StoryIdentityRecord } from "./schema-v2.ts";
+import type { StoryThreadStateRecord } from "../../store/store.ts";
 
 type StoryEntityRecord = {
   id: string;
@@ -40,11 +42,26 @@ type StoryChapterRecord = {
   claimsJson: string;
 };
 
+export interface StoryProjectedRelationSnapshotRecord {
+  id: string;
+  fromIdentityId: string;
+  relation: string;
+  toIdentityId: string;
+  visibility: string;
+  strength: number;
+  derivedFromEventId?: string;
+  validFromTurn?: number;
+  updatedAt: number;
+}
+
 export interface StoryWorldSnapshot {
   entities: StoryEntityRecord[];
   relations: StoryRelationRecord[];
   activeThreads: StoryThread[];
   narrativeSignals: StoryNarrativeSignalRecord[];
+  identities?: StoryIdentityRecord[];
+  projectedRelations?: StoryProjectedRelationSnapshotRecord[];
+  threadState?: StoryThreadStateRecord[];
 }
 
 export interface StoryClaim {
@@ -78,6 +95,19 @@ export function buildStoryWorldSnapshot(db: DatabaseSyncInstance): StoryWorldSna
     relations: projectedRelations.length > 0 ? projectedRelations : listAllStoryRelations(db),
     activeThreads: listTrackedThreads(db),
     narrativeSignals: listAllNarrativeSignals(db),
+    identities: listAllStoryIdentities(db),
+    projectedRelations: projectedRelations.map((relation) => ({
+      id: relation.id,
+      fromIdentityId: relation.fromId,
+      relation: relation.relation,
+      toIdentityId: relation.toId,
+      visibility: relation.visibility,
+      strength: relation.intensity,
+      derivedFromEventId: relation.sourceEventId,
+      validFromTurn: relation.validFromTurn,
+      updatedAt: relation.updatedAt,
+    })),
+    threadState: listAllThreadState(db),
   };
 }
 
@@ -204,6 +234,104 @@ function listAllProjectedRelations(db: DatabaseSyncInstance): StoryRelationRecor
   }));
 }
 
+function listAllStoryIdentities(db: DatabaseSyncInstance): StoryIdentityRecord[] {
+  const identityRows = db.prepare(`
+    SELECT id, kind, canonical_name, status, payload_json, created_at, updated_at
+    FROM story_identities
+    ORDER BY created_at ASC, id ASC
+  `).all() as Array<{
+    id: string;
+    kind: string;
+    canonical_name: string;
+    status: string;
+    payload_json: string;
+    created_at: number;
+    updated_at: number;
+  }>;
+  const aliasRows = db.prepare(`
+    SELECT identity_id, alias, alias_type, valid_from_turn, valid_to_turn, is_primary_public, created_at, updated_at
+    FROM story_identity_aliases
+    ORDER BY identity_id ASC, created_at ASC, alias ASC
+  `).all() as Array<{
+    identity_id: string;
+    alias: string;
+    alias_type: string;
+    valid_from_turn: number | null;
+    valid_to_turn: number | null;
+    is_primary_public: number;
+    created_at: number;
+    updated_at: number;
+  }>;
+
+  const aliasesByIdentity = new Map<string, NonNullable<StoryIdentityRecord["aliases"]>>();
+  for (const row of aliasRows) {
+    const current = aliasesByIdentity.get(row.identity_id) ?? [];
+    current.push({
+      alias: row.alias,
+      aliasType: row.alias_type,
+      validFromTurn: row.valid_from_turn ?? undefined,
+      validToTurn: row.valid_to_turn ?? undefined,
+      isPrimaryPublic: row.is_primary_public === 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+    aliasesByIdentity.set(row.identity_id, current);
+  }
+
+  return identityRows.map((row) => ({
+    id: row.id,
+    kind: row.kind as StoryIdentityRecord["kind"],
+    canonicalName: row.canonical_name,
+    status: row.status as StoryIdentityRecord["status"],
+    payloadJson: row.payload_json,
+    aliases: aliasesByIdentity.get(row.id) ?? [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+function listAllThreadState(db: DatabaseSyncInstance): StoryThreadStateRecord[] {
+  const rows = db.prepare(`
+    SELECT
+      thread_id,
+      stage,
+      urgency,
+      pressure,
+      focus_identity_id,
+      last_advanced_turn,
+      last_event_id,
+      blocking_factors_json,
+      pending_payoffs_json,
+      updated_at
+    FROM story_thread_state
+    ORDER BY updated_at ASC, thread_id ASC
+  `).all() as Array<{
+    thread_id: string;
+    stage: string;
+    urgency: number;
+    pressure: number;
+    focus_identity_id: string | null;
+    last_advanced_turn: number | null;
+    last_event_id: string | null;
+    blocking_factors_json: string;
+    pending_payoffs_json: string;
+    updated_at: number;
+  }>;
+
+  return rows.map((row) => ({
+    threadId: row.thread_id,
+    stage: row.stage as StoryThreadStateRecord["stage"],
+    urgency: row.urgency,
+    pressure: row.pressure,
+    focusIdentityId: row.focus_identity_id,
+    lastAdvancedTurn: row.last_advanced_turn,
+    lastEventId: row.last_event_id,
+    blockingFactorsJson: row.blocking_factors_json,
+    pendingPayoffsJson: row.pending_payoffs_json,
+    updatedAt: row.updated_at,
+  }));
+}
+
 function listTrackedThreads(db: DatabaseSyncInstance): StoryThread[] {
   const rows = db.prepare(`
     SELECT
@@ -211,6 +339,7 @@ function listTrackedThreads(db: DatabaseSyncInstance): StoryThread[] {
       ts.stage,
       ts.urgency,
       ts.pressure,
+      ts.focus_identity_id,
       ts.last_advanced_turn,
       ts.last_event_id
     FROM story_entities e
@@ -222,6 +351,7 @@ function listTrackedThreads(db: DatabaseSyncInstance): StoryThread[] {
     stage: string | null;
     urgency: number | null;
     pressure: number | null;
+    focus_identity_id: string | null;
     last_advanced_turn: number | null;
     last_event_id: string | null;
   }>;
@@ -238,6 +368,7 @@ function listTrackedThreads(db: DatabaseSyncInstance): StoryThread[] {
       if (row.stage) thread.stage = row.stage;
       if (typeof row.urgency === "number") thread.urgency = row.urgency;
       if (typeof row.pressure === "number") thread.pressure = row.pressure;
+      if (row.focus_identity_id) thread.focusIdentityId = row.focus_identity_id;
       if (typeof row.last_advanced_turn === "number") thread.lastAdvancedTurn = row.last_advanced_turn;
       if (row.last_event_id) thread.lastEventId = row.last_event_id;
       return [thread];

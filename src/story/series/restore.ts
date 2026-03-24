@@ -60,7 +60,10 @@ function isValidWorldSnapshot(value: unknown): boolean {
     && Array.isArray(value.activeThreads)
     && value.activeThreads.every(isValidThreadRecord)
     && Array.isArray(value.narrativeSignals)
-    && value.narrativeSignals.every(isValidNarrativeSignalRecord);
+    && value.narrativeSignals.every(isValidNarrativeSignalRecord)
+    && isOptionalArrayOf(value.identities, isValidIdentityRecord)
+    && isOptionalArrayOf(value.projectedRelations, isValidProjectedRelationRecord)
+    && isOptionalArrayOf(value.threadState, isValidThreadStateRecord);
 }
 
 function isValidDirectorSnapshot(value: unknown): boolean {
@@ -113,6 +116,7 @@ function isValidWorldRelationRecord(value: unknown): boolean {
     && typeof value.visibility === "string"
     && typeof value.intensity === "number"
     && isOptionalString(value.sourceEventId)
+    && isOptionalNumber(value.validFromTurn)
     && typeof value.createdAt === "number"
     && typeof value.updatedAt === "number";
 }
@@ -159,4 +163,61 @@ function isOptionalString(value: unknown): boolean {
 
 function isOptionalNumber(value: unknown): boolean {
   return value === undefined || typeof value === "number";
+}
+
+function isOptionalArrayOf(
+  value: unknown,
+  itemValidator: (entry: unknown) => boolean,
+): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(itemValidator));
+}
+
+function isValidIdentityRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.kind === "string"
+    && typeof value.canonicalName === "string"
+    && typeof value.status === "string"
+    && typeof value.payloadJson === "string"
+    && isOptionalArrayOf(value.aliases, isValidIdentityAliasRecord)
+    && isOptionalNumber(value.createdAt)
+    && isOptionalNumber(value.updatedAt);
+}
+
+function isValidIdentityAliasRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.alias === "string"
+    && typeof value.aliasType === "string"
+    && isOptionalNumber(value.validFromTurn)
+    && isOptionalNumber(value.validToTurn)
+    && (value.isPrimaryPublic === undefined || typeof value.isPrimaryPublic === "boolean")
+    && isOptionalNumber(value.createdAt)
+    && isOptionalNumber(value.updatedAt);
+}
+
+function isValidProjectedRelationRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.fromIdentityId === "string"
+    && typeof value.relation === "string"
+    && typeof value.toIdentityId === "string"
+    && typeof value.visibility === "string"
+    && typeof value.strength === "number"
+    && isOptionalString(value.derivedFromEventId)
+    && isOptionalNumber(value.validFromTurn)
+    && typeof value.updatedAt === "number";
+}
+
+function isValidThreadStateRecord(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.threadId === "string"
+    && typeof value.stage === "string"
+    && typeof value.urgency === "number"
+    && typeof value.pressure === "number"
+    && isOptionalString(value.focusIdentityId)
+    && isOptionalNumber(value.lastAdvancedTurn)
+    && isOptionalString(value.lastEventId)
+    && typeof value.blockingFactorsJson === "string"
+    && typeof value.pendingPayoffsJson === "string"
+    && isOptionalNumber(value.updatedAt);
 }
