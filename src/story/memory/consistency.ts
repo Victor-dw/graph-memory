@@ -111,6 +111,13 @@ export function buildStoryWorldSnapshot(db: DatabaseSyncInstance): StoryWorldSna
   };
 }
 
+export function buildStoryContinuationSnapshot(db: DatabaseSyncInstance): StoryWorldSnapshot {
+  return {
+    ...buildStoryWorldSnapshot(db),
+    relations: listAllStoryRelations(db),
+  };
+}
+
 export function validateChapterClaims(world: StoryWorldSnapshot, claims: StoryClaim[], asOfTurn?: number) {
   return claims.filter((claim) => contradictsWorld(world, claim, asOfTurn));
 }
@@ -323,9 +330,9 @@ function listAllThreadState(db: DatabaseSyncInstance): StoryThreadStateRecord[] 
     stage: row.stage as StoryThreadStateRecord["stage"],
     urgency: row.urgency,
     pressure: row.pressure,
-    focusIdentityId: row.focus_identity_id,
-    lastAdvancedTurn: row.last_advanced_turn,
-    lastEventId: row.last_event_id,
+    focusIdentityId: row.focus_identity_id ?? undefined,
+    lastAdvancedTurn: row.last_advanced_turn ?? undefined,
+    lastEventId: row.last_event_id ?? undefined,
     blockingFactorsJson: row.blocking_factors_json,
     pendingPayoffsJson: row.pending_payoffs_json,
     updatedAt: row.updated_at,

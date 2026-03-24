@@ -228,6 +228,7 @@ describe("story run bundle", () => {
           threadId: "t-secret-realm",
           stage: "showdown",
           lastEventId: "sle-sev-3-1",
+          pendingPayoffsJson: '["stabilize-t-secret-realm"]',
         }),
       ]));
     } finally {

@@ -378,7 +378,7 @@ function clearPersistedStorySnapshot(db: DatabaseSyncInstance): void {
 
 function toProjectedSnapshotRelations(world: StoryRestoreSnapshot["world"]) {
   if ((world.projectedRelations?.length ?? 0) > 0) {
-    return world.projectedRelations ?? [];
+    return (world.projectedRelations ?? []).filter((relation) => relation.relation !== "EXECUTES");
   }
 
   return world.relations.map((relation) => ({
@@ -391,7 +391,14 @@ function toProjectedSnapshotRelations(world: StoryRestoreSnapshot["world"]) {
     derivedFromEventId: relation.sourceEventId,
     validFromTurn: relation.validFromTurn,
     updatedAt: relation.updatedAt,
-  }));
+  })).filter((relation) =>
+    relation.relation !== "EXECUTES"
+    && (
+      relation.id.startsWith("ssr-")
+      || typeof relation.validFromTurn === "number"
+      || relation.derivedFromEventId?.startsWith("sle-") === true
+    )
+  );
 }
 
 function toSnapshotThreadState(world: StoryRestoreSnapshot["world"]): StoryThreadStateRecord[] {

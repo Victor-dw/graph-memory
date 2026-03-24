@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSyncInstance } from "@photostructure/sqlite";
 import { buildStoryBeliefSnapshot } from "../beliefs.ts";
-import { buildStoryWorldSnapshot } from "../memory/consistency.ts";
+import { buildStoryContinuationSnapshot } from "../memory/consistency.ts";
 import type { StoryLoopResult } from "../runtime/run-loop.ts";
 import {
   serializeChapterMarkdown,
@@ -61,7 +61,7 @@ export async function writeRunBundle(
 
   writeFileSync(
     path.join(stateDir, "final-world.json"),
-    toPrettyJson(buildStoryWorldSnapshot(db)),
+    toPrettyJson(buildStoryContinuationSnapshot(db)),
     "utf8",
   );
   writeFileSync(

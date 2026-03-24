@@ -129,11 +129,60 @@ describe("story series restore", () => {
       await restoreSeriesRun(targetDb, { bundlePath: bundle.bundlePath });
       const restoredWorld = buildStoryWorldSnapshot(targetDb);
 
-      expect(normalizeCompatibilityWorldSnapshot(restoredWorld)).toEqual(
-        normalizeCompatibilityWorldSnapshot(sourceWorld),
+      expect(restoredWorld.entities.map((entity) => entity.id)).toEqual(sourceWorld.entities.map((entity) => entity.id));
+      expect(restoredWorld.activeThreads).toEqual(sourceWorld.activeThreads);
+      expect(restoredWorld.narrativeSignals.map((signal) => signal.id)).toEqual(
+        sourceWorld.narrativeSignals.map((signal) => signal.id),
       );
+      expect(readValueCount(targetDb, "story_state_relations", "id", "ssr-a-ember-seal-IN_CONFLICT-conflict:a-ember-seal")).toBe(0);
+      expect(readValueCount(targetDb, "story_thread_state", "thread_id", "t-secret-realm")).toBe(1);
       expect(sortBeliefs(buildStoryBeliefSnapshot(targetDb))).toEqual(sourceBeliefs);
       expect(loadDirectorState(targetDb)).toEqual(sourceDirector);
+    } finally {
+      sourceDb.close();
+      targetDb.close();
+      rmSync(outputRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reconstructs v2 tables from legacy-carried fallback fields when explicit v2 sections are omitted", async () => {
+    const sourceDb = createTestDb();
+    const targetDb = createTestDb();
+    const outputRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-restore-"));
+
+    try {
+      initializeStoryWorld(sourceDb);
+      const loopResult = await runStoryLoop(sourceDb, {
+        turns: 3,
+        model: createStubStoryModelClient(),
+      });
+      const sourceWorld = buildStoryWorldSnapshot(sourceDb);
+      const bundle = await writeRunBundle(sourceDb, loopResult, {
+        outputRoot,
+        runMetadata: {
+          runId: "restore-fallback-v2-run",
+          turns: 3,
+          chapterEveryTurns: 3,
+          dbPath: "/tmp/story.db",
+          resetOnStart: true,
+          model: { mode: "stub", name: "stub-story-model" },
+          startedAt: "2026-03-23T08:00:00.000Z",
+          finishedAt: "2026-03-23T08:00:05.000Z",
+        },
+      });
+      const worldPath = path.join(bundle.bundlePath, "state", "final-world.json");
+      const world = JSON.parse(readUtf8(worldPath)) as Record<string, unknown>;
+      world.relations = sourceWorld.relations;
+      world.activeThreads = sourceWorld.activeThreads;
+      delete world.identities;
+      delete world.projectedRelations;
+      delete world.threadState;
+      writeFileSync(worldPath, `${JSON.stringify(world, null, 2)}\n`, "utf8");
+
+      await restoreSeriesRun(targetDb, { bundlePath: bundle.bundlePath });
+
+      expect(readValueCount(targetDb, "story_state_relations", "id", "ssr-a-ember-seal-IN_CONFLICT-conflict:a-ember-seal")).toBe(1);
+      expect(readValueCount(targetDb, "story_thread_state", "thread_id", "t-secret-realm")).toBe(1);
     } finally {
       sourceDb.close();
       targetDb.close();
@@ -170,6 +219,45 @@ describe("story series restore", () => {
       await expect(
         restoreSeriesRun(targetDb, { bundlePath: bundle.bundlePath }),
       ).rejects.toThrowError("[story-series] missing required snapshot");
+    } finally {
+      sourceDb.close();
+      targetDb.close();
+      rmSync(outputRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed optional schema v2 world sections", async () => {
+    const sourceDb = createTestDb();
+    const targetDb = createTestDb();
+    const outputRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-restore-"));
+
+    try {
+      initializeStoryWorld(sourceDb);
+      const loopResult = await runStoryLoop(sourceDb, {
+        turns: 3,
+        model: createStubStoryModelClient(),
+      });
+      const bundle = await writeRunBundle(sourceDb, loopResult, {
+        outputRoot,
+        runMetadata: {
+          runId: "restore-malformed-v2-run",
+          turns: 3,
+          chapterEveryTurns: 3,
+          dbPath: "/tmp/story.db",
+          resetOnStart: true,
+          model: { mode: "stub", name: "stub-story-model" },
+          startedAt: "2026-03-23T08:00:00.000Z",
+          finishedAt: "2026-03-23T08:00:05.000Z",
+        },
+      });
+      const worldPath = path.join(bundle.bundlePath, "state", "final-world.json");
+      const world = JSON.parse(readUtf8(worldPath)) as Record<string, unknown>;
+      world.projectedRelations = [{ id: "broken-projection" }];
+      writeFileSync(worldPath, `${JSON.stringify(world, null, 2)}\n`, "utf8");
+
+      await expect(
+        restoreSeriesRun(targetDb, { bundlePath: bundle.bundlePath }),
+      ).rejects.toThrowError(`[story-series] invalid snapshot shape: ${worldPath}`);
     } finally {
       sourceDb.close();
       targetDb.close();
@@ -421,14 +509,4 @@ function normalizeWorldSnapshot(snapshot: ReturnType<typeof buildStoryWorldSnaps
 
 function readUtf8(filePath: string): string {
   return readFileSync(filePath, "utf8");
-}
-
-function normalizeCompatibilityWorldSnapshot(snapshot: ReturnType<typeof buildStoryWorldSnapshot>) {
-  return {
-    ...normalizeWorldSnapshot(snapshot),
-    identities: (snapshot.identities ?? []).map(({ createdAt, updatedAt, ...identity }) => identity)
-      .sort((a, b) => a.id.localeCompare(b.id)),
-    threadState: (snapshot.threadState ?? []).map(({ updatedAt, focusIdentityId, ...threadState }) => threadState)
-      .sort((a, b) => a.threadId.localeCompare(b.threadId)),
-  };
 }
