@@ -3,7 +3,7 @@ import type { StoryResolvedEvent, StoryNarrativeSignal } from "../../src/store/s
 import { selectChapterFocus, type EnsembleHeatEntry } from "../../src/story/narrative/director.ts";
 import type { ChapterSelection as RuntimeChapterSelection, NarrativeDirectorInput as RuntimeNarrativeDirectorInput } from "../../src/story/runtime/model-client.ts";
 import type { StoryThread } from "../../src/story/types.ts";
-import { loadDirectorState, saveDirectorState, type NarrativeDirectorState } from "../../src/story/narrative/state.ts";
+import { loadDirectorState, saveDirectorState, type NarrativeDirectorState, updateDirectorStateFromTurn } from "../../src/story/narrative/state.ts";
 import { createTestDb } from "../helpers.ts";
 
 describe("narrative director", () => {
@@ -123,6 +123,131 @@ describe("narrative director", () => {
       saveDirectorState(db, snapshot);
 
       expect(loadDirectorState(db)).toEqual(snapshot);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ignores malformed focus entries when loading saved director snapshots", () => {
+    const db = createTestDb();
+    try {
+      db.prepare(`
+        INSERT INTO story_director_state (key, value_json, updated_at)
+        VALUES (?, ?, ?)
+      `).run("narrative-director", JSON.stringify({
+        activeThreads: [{ id: "t-snapshot", name: "Snapshot Thread", status: "active" }],
+        unresolvedSecrets: [null, {
+          id: "ns-snap-secret",
+          kind: "secret",
+          subjectId: "c-li-yao",
+          relatedId: "t-snapshot",
+          weight: 1,
+          payloadJson: "{\"k\":\"v\"}",
+          status: "active",
+        }],
+        activeTensions: [],
+        payoffCandidates: [],
+        ensembleHeat: [{ entityId: "c-li-yao", heat: 9 }],
+        recentPovIds: ["c-li-yao"],
+      }), Date.now());
+
+      const loaded = loadDirectorState(db);
+      expect(loaded.unresolvedSecrets).toHaveLength(1);
+      expect(loaded.unresolvedSecrets[0]?.id).toBe("ns-snap-secret");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("compacts repeated secret/tension/payoff focus entries when updating from a turn", () => {
+    const db = createTestDb();
+    try {
+      const baseState: NarrativeDirectorState = {
+        activeThreads: fixtureThreads,
+        unresolvedSecrets: [{
+          id: "ns-secret-existing",
+          kind: "secret",
+          subjectId: "c-li-yao",
+          relatedId: "t-secret-realm",
+          weight: 1.1,
+          payloadJson: "{}",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+        activeTensions: [{
+          id: "ns-tension-existing",
+          kind: "tension",
+          subjectId: "c-su-wan",
+          relatedId: "c-shen-mo",
+          weight: 1.2,
+          payloadJson: "{}",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+        payoffCandidates: [{
+          id: "ns-payoff-existing",
+          kind: "payoff-candidate",
+          subjectId: "a-ember-seal",
+          relatedId: "c-li-yao",
+          weight: 1.3,
+          payloadJson: "{}",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+        ensembleHeat: [],
+        recentPovIds: [],
+      };
+
+      const updated = updateDirectorStateFromTurn(
+        db,
+        baseState,
+        {
+          turnNumber: 9,
+          events: [
+            {
+              id: "sev-9-1",
+              turnNumber: 9,
+              type: "conceal-bloodline",
+              summary: "Duplicate secret focus key",
+              payload: { subjectId: "c-li-yao", objectId: "t-secret-realm" },
+            },
+            {
+              id: "sev-9-2",
+              turnNumber: 9,
+              type: "sect-conflict",
+              summary: "Duplicate tension focus key",
+              payload: { subjectId: "c-su-wan", objectId: "c-shen-mo" },
+            },
+            {
+              id: "sev-9-3",
+              turnNumber: 9,
+              type: "artifact-breakthrough",
+              summary: "Duplicate payoff focus key",
+              payload: { subjectId: "a-ember-seal", objectId: "c-li-yao" },
+            },
+          ],
+          stateChanges: [],
+        },
+        {
+          id: "focus-li-yao",
+          score: 1,
+          primaryPovId: "c-li-yao",
+          eventIds: ["sev-9-1"],
+          toneTarget: "tense",
+          pacingTarget: "slow",
+          hookTarget: "hook",
+        },
+      );
+
+      expect(updated.unresolvedSecrets).toHaveLength(1);
+      expect(updated.unresolvedSecrets[0]?.id).toBe("ns-secret-sev-9-1");
+      expect(updated.activeTensions).toHaveLength(1);
+      expect(updated.activeTensions[0]?.id).toBe("ns-tension-sev-9-2");
+      expect(updated.payoffCandidates).toHaveLength(1);
+      expect(updated.payoffCandidates[0]?.id).toBe("ns-payoff-candidate-sev-9-3");
     } finally {
       db.close();
     }

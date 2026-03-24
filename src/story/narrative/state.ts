@@ -1,5 +1,6 @@
 import type { DatabaseSyncInstance } from "@photostructure/sqlite";
 import type { StoryResolvedEvent, StoryNarrativeSignal } from "../../store/store.ts";
+import { compactDirectorFocusSignals } from "../memory/director-focus.ts";
 import type { StoryTurnResult } from "../turn-simulator.ts";
 import type { StoryThread } from "../types.ts";
 import type { ChapterSelection, EnsembleHeatEntry } from "./director.ts";
@@ -37,9 +38,9 @@ export function loadDirectorState(db: DatabaseSyncInstance): NarrativeDirectorSt
 
   return {
     activeThreads: listTrackedThreads(db),
-    unresolvedSecrets: listSignalsByKind(db, "secret"),
-    activeTensions: listSignalsByKind(db, "tension"),
-    payoffCandidates: listSignalsByKind(db, "payoff-candidate"),
+    unresolvedSecrets: compactDirectorFocusSignals(listSignalsByKind(db, "secret")),
+    activeTensions: compactDirectorFocusSignals(listSignalsByKind(db, "tension")),
+    payoffCandidates: compactDirectorFocusSignals(listSignalsByKind(db, "payoff-candidate")),
     ensembleHeat: listEnsembleHeat(db),
     recentPovIds: listRecentPovs(db),
   };
@@ -58,9 +59,11 @@ export function updateDirectorStateFromTurn(
   void db;
   return {
     activeThreads: reconcileActiveThreads(state.activeThreads, turnResult.events),
-    unresolvedSecrets: reconcileSignals(state.unresolvedSecrets, turnResult.events, "secret"),
-    activeTensions: reconcileSignals(state.activeTensions, turnResult.events, "tension"),
-    payoffCandidates: reconcileSignals(state.payoffCandidates, turnResult.events, "payoff-candidate"),
+    unresolvedSecrets: compactDirectorFocusSignals(reconcileSignals(state.unresolvedSecrets, turnResult.events, "secret")),
+    activeTensions: compactDirectorFocusSignals(reconcileSignals(state.activeTensions, turnResult.events, "tension")),
+    payoffCandidates: compactDirectorFocusSignals(
+      reconcileSignals(state.payoffCandidates, turnResult.events, "payoff-candidate"),
+    ),
     ensembleHeat: updateEnsembleHeat(state.ensembleHeat, turnResult.events),
     recentPovIds: appendRecentPov(state.recentPovIds, selection.primaryPovId),
   };
@@ -266,13 +269,28 @@ function parseDirectorStateSnapshot(rawValue: string): NarrativeDirectorState | 
     }
     return {
       activeThreads: parsed.activeThreads as StoryThread[],
-      unresolvedSecrets: parsed.unresolvedSecrets as StoryNarrativeSignal[],
-      activeTensions: parsed.activeTensions as StoryNarrativeSignal[],
-      payoffCandidates: parsed.payoffCandidates as StoryNarrativeSignal[],
+      unresolvedSecrets: compactDirectorFocusSignals(filterNarrativeSignals(parsed.unresolvedSecrets)),
+      activeTensions: compactDirectorFocusSignals(filterNarrativeSignals(parsed.activeTensions)),
+      payoffCandidates: compactDirectorFocusSignals(filterNarrativeSignals(parsed.payoffCandidates)),
       ensembleHeat: parsed.ensembleHeat as EnsembleHeatEntry[],
       recentPovIds: parsed.recentPovIds.filter((value): value is string => typeof value === "string"),
     };
   } catch {
     return null;
   }
+}
+
+function filterNarrativeSignals(values: unknown[]): StoryNarrativeSignal[] {
+  return values.filter(isNarrativeSignalRecord);
+}
+
+function isNarrativeSignalRecord(value: unknown): value is StoryNarrativeSignal {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof (value as StoryNarrativeSignal).id === "string"
+    && typeof (value as StoryNarrativeSignal).kind === "string"
+    && typeof (value as StoryNarrativeSignal).subjectId === "string"
+    && typeof (value as StoryNarrativeSignal).payloadJson === "string",
+  );
 }
