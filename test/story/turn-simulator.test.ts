@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSeedWorld } from "../../src/story/bootstrap.ts";
 import { createStoryWorldState } from "../../src/story/world-state.ts";
 import { runStoryTurn, type StoryTurnInput } from "../../src/story/turn-simulator.ts";
@@ -34,6 +34,10 @@ describe("story turn simulator", () => {
       const eventCount = (db.prepare("SELECT COUNT(*) as c FROM story_events WHERE turn_number = 1").get() as
         { c: number }).c;
       expect(eventCount).toBe(result.events.length);
+
+      const ledgerCount = (db.prepare("SELECT COUNT(*) as c FROM story_event_ledger WHERE turn_number = 1").get() as
+        { c: number }).c;
+      expect(ledgerCount).toBe(result.events.length);
     } finally {
       db.close();
     }
@@ -202,10 +206,131 @@ describe("story turn simulator", () => {
         FROM story_narrative_signals
         WHERE kind = ? AND subject_id = ? AND related_id = ?
       `).get("conceal-bloodline", "c-li-yao", "conceal-bloodline") as { c: number }).c;
+      const canonicalExecutesCount = (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM story_state_relations
+        WHERE relation = 'EXECUTES'
+      `).get() as { c: number }).c;
 
       expect(relationCount).toBe(1);
       expect(signalCount).toBe(1);
+      expect(canonicalExecutesCount).toBe(0);
     } finally {
+      db.close();
+    }
+  });
+
+  it("projects non-EXECUTES canonical relations from artifact-seek events", async () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+
+      await runStoryTurn(db, {
+        turnNumber: 11,
+        model: {
+          rerankActorActions: async (actions: StoryAction[], context?: ActorDecisionInput) =>
+            forceSingleArtifactSeeker(actions, context),
+          rerankFactionActions: async (actions: StoryAction[]) => actions,
+        },
+      });
+
+      const soughtByCount = (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM story_state_relations
+        WHERE relation = 'SOUGHT_BY'
+      `).get() as { c: number }).c;
+      const mirroredActorIdentity = db.prepare("SELECT id FROM story_identities WHERE id = ?")
+        .get("c-li-yao") as { id: string } | undefined;
+      const mirroredArtifactIdentity = db.prepare("SELECT id FROM story_identities WHERE id = ?")
+        .get("a-ember-seal") as { id: string } | undefined;
+
+      expect(soughtByCount).toBeGreaterThan(0);
+      expect(mirroredActorIdentity?.id).toBe("c-li-yao");
+      expect(mirroredArtifactIdentity?.id).toBe("a-ember-seal");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("projects conflict aggregates and synthesizes conflict identities for canonical state", async () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+
+      await runStoryTurn(db, {
+        turnNumber: 12,
+        model: {
+          rerankActorActions: async (actions: StoryAction[], context?: ActorDecisionInput) =>
+            forceConflictFixtureActorActions(actions, context),
+          rerankFactionActions: async (actions: StoryAction[]) => actions,
+        },
+      });
+
+      const projectedConflictRelation = db.prepare(`
+        SELECT from_identity_id, relation, to_identity_id
+        FROM story_state_relations
+        WHERE relation = 'IN_CONFLICT' AND from_identity_id = 'a-ember-seal'
+      `).get() as
+        | { from_identity_id: string; relation: string; to_identity_id: string }
+        | undefined;
+      const conflictIdentity = db.prepare(`
+        SELECT id, kind
+        FROM story_identities
+        WHERE id = 'conflict:a-ember-seal'
+      `).get() as
+        | { id: string; kind: string }
+        | undefined;
+
+      expect(projectedConflictRelation).toEqual({
+        from_identity_id: "a-ember-seal",
+        relation: "IN_CONFLICT",
+        to_identity_id: "conflict:a-ember-seal",
+      });
+      expect(conflictIdentity).toEqual({
+        id: "conflict:a-ember-seal",
+        kind: "thread",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("warns once when a non-EXECUTES projection endpoint cannot be resolved", async () => {
+    const db = createTestDb();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+      db.prepare("DELETE FROM story_entities WHERE id = ?").run("a-ember-seal");
+
+      await runStoryTurn(db, {
+        turnNumber: 13,
+        model: {
+          rerankActorActions: async (actions: StoryAction[], context?: ActorDecisionInput) =>
+            forceSingleArtifactSeeker(actions, context),
+          rerankFactionActions: async (actions: StoryAction[]) => actions,
+        },
+      });
+
+      const projectedCount = (db.prepare(`
+        SELECT COUNT(*) AS c
+        FROM story_state_relations
+        WHERE relation = 'SOUGHT_BY'
+      `).get() as { c: number }).c;
+
+      expect(projectedCount).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[story-projection] skipped projected relation due to unresolved identity endpoints",
+        expect.objectContaining({
+          relation: "SOUGHT_BY",
+          fromIdentityId: "a-ember-seal",
+          toIdentityId: "c-li-yao",
+        }),
+      );
+    } finally {
+      warnSpy.mockRestore();
       db.close();
     }
   });
@@ -256,6 +381,13 @@ function forceConflictFixtureActorActions(
     return reorderActions(actions, ["seek-artifact", "train-breakthrough"]);
   }
   return actions;
+}
+
+function forceSingleArtifactSeeker(actions: StoryAction[], context?: ActorDecisionInput): StoryAction[] {
+  if (context?.actorId === "c-li-yao") {
+    return reorderActions(actions, ["seek-artifact"]);
+  }
+  return preferNoArtifactSeek(actions);
 }
 
 function preferNoArtifactSeek(actions: StoryAction[]): StoryAction[] {

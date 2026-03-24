@@ -4,7 +4,9 @@ import { rankActorActions } from "./decision/actor-engine.ts";
 import { rankFactionActions } from "./decision/faction-engine.ts";
 import { propagateBeliefsFromEvents } from "./beliefs.ts";
 import {
+  appendStoryLedgerEvent,
   insertStoryEvent,
+  upsertProjectedRelation,
   insertStoryTurn,
   listStoryBeliefsForActor,
   listStoryEntitiesByKind,
@@ -17,6 +19,7 @@ import type { StoryModelClient } from "./runtime/model-client.ts";
 import {
   applyResolvedEvents,
   deriveNarrativeSignalsFromEvents,
+  extractBeliefRelationFromEvent,
   resolveActionConflicts,
   summarizeResolvedEvents,
   type StoryStateChange,
@@ -92,6 +95,30 @@ function persistTurnAtomically(
     });
     for (const event of events) {
       insertStoryEvent(db, event);
+      const ledgerEventId = `sle-${event.id ?? `${event.turnNumber}-${event.type}`}`;
+      appendStoryLedgerEvent(db, {
+        id: ledgerEventId,
+        turnNumber: event.turnNumber,
+        eventType: event.type,
+        eventPhase: "resolution",
+        summary: event.summary,
+        visibility: event.visibility ?? "public",
+        payloadJson: JSON.stringify(event.payload),
+      });
+
+      const relation = extractBeliefRelationFromEvent(event);
+      if (!relation || relation.relation === "EXECUTES") {
+        continue;
+      }
+      upsertProjectedRelation(db, {
+        id: `ssr-${relation.fromId}-${relation.relation}-${relation.toId}`,
+        fromIdentityId: relation.fromId,
+        relation: relation.relation,
+        toIdentityId: relation.toId,
+        visibility: event.visibility ?? "public",
+        derivedFromEventId: ledgerEventId,
+        validFromTurn: event.turnNumber,
+      });
     }
     for (const signal of narrativeSignals) {
       upsertStoryNarrativeSignal(db, signal);

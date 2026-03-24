@@ -20,6 +20,12 @@ interface EventPayloadWithBelief {
   [key: string]: unknown;
 }
 
+export interface EventBeliefRelation {
+  fromId: string;
+  relation: string;
+  toId: string;
+}
+
 interface ResolvedActionInput extends StoryAction {
   actorId: string;
   targetArtifactId?: string;
@@ -88,32 +94,44 @@ export function resolveActionConflicts(
 export function applyResolvedEvents(db: DatabaseSyncInstance, events: StoryResolvedEvent[]): StoryStateChange[] {
   const updates: StoryStateChange[] = [];
   for (const event of events) {
-    const payload = event.payload as EventPayloadWithBelief | null;
-    if (
-      !payload
-      || typeof payload.subjectId !== "string"
-      || typeof payload.predicate !== "string"
-      || typeof payload.objectId !== "string"
-    ) {
+    const relation = extractBeliefRelationFromEvent(event);
+    if (!relation) {
       continue;
     }
     insertStoryRelation(db, {
-      id: buildStableRelationId(payload),
-      fromId: payload.subjectId,
-      relation: payload.predicate,
-      toId: payload.objectId,
+      id: buildStableRelationId(relation),
+      fromId: relation.fromId,
+      relation: relation.relation,
+      toId: relation.toId,
       visibility: event.visibility ?? "public",
       sourceEventId: event.id,
     });
     updates.push({
       kind: "relation-upsert",
-      fromId: payload.subjectId,
-      relation: payload.predicate,
-      toId: payload.objectId,
+      fromId: relation.fromId,
+      relation: relation.relation,
+      toId: relation.toId,
       sourceEventId: event.id,
     });
   }
   return updates;
+}
+
+export function extractBeliefRelationFromEvent(event: StoryResolvedEvent): EventBeliefRelation | null {
+  const payload = event.payload as EventPayloadWithBelief | null;
+  if (
+    !payload
+    || typeof payload.subjectId !== "string"
+    || typeof payload.predicate !== "string"
+    || typeof payload.objectId !== "string"
+  ) {
+    return null;
+  }
+  return {
+    fromId: payload.subjectId,
+    relation: payload.predicate,
+    toId: payload.objectId,
+  };
 }
 
 export function deriveNarrativeSignalsFromEvents(events: StoryResolvedEvent[]): StoryNarrativeSignal[] {
@@ -155,6 +173,7 @@ function inferTargetArtifactId(action: StoryAction): string | undefined {
 }
 
 function buildConflictAggregateId(artifactId: string, turnNumber: number): string {
+  // Keep conflict aggregate ids stable across turns so repeated contention can accumulate and escalate.
   void turnNumber;
   return `conflict:${artifactId}`;
 }
@@ -192,8 +211,8 @@ function createResolvedEventFromAction(
   };
 }
 
-function buildStableRelationId(payload: EventPayloadWithBelief): string {
-  return `sr-${payload.subjectId}-${payload.predicate}-${payload.objectId}`;
+function buildStableRelationId(relation: EventBeliefRelation): string {
+  return `sr-${relation.fromId}-${relation.relation}-${relation.toId}`;
 }
 
 function buildStableSignalId(
