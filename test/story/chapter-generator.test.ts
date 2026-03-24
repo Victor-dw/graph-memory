@@ -20,6 +20,7 @@ describe("chapter generator", () => {
     expect(capture.lastPacket?.summary).toContain("\"relationshipHistory\"");
     expect(capture.lastPacket?.summary).toContain("\"unresolvedSecrets\"");
     expect(capture.lastPacket?.summary).toContain("\"activeTensionSummary\"");
+    expect(capture.lastPacket?.summary).toContain("\"threadStateSummary\"");
     expect(capture.lastPacket?.summary).toContain("\"toneTarget\":\"wuxia intrigue\"");
     expect(capture.lastPacket?.summary).toContain("\"pacingTarget\":\"tight and rising\"");
     expect(capture.lastPacket?.summary).toContain("\"chapterEndHook\":\"the spirit tablet splits open at midnight\"");
@@ -100,6 +101,7 @@ describe("chapter generator", () => {
       expect(packet.relationshipHistory.length).toBeGreaterThan(0);
       expect(packet.unresolvedSecrets.length).toBeGreaterThan(0);
       expect(packet.activeTensionSummary.length).toBeGreaterThan(0);
+      expect(packet.threadStateSummary.length).toBeGreaterThan(0);
       expect(packet.chapterEndHook).toBeTruthy();
     } finally {
       db.close();
@@ -198,6 +200,7 @@ const chapterPacket: ChapterPacket = {
     },
   ],
   activeTensionSummary: ["tension: c-li-yao -> t-secret-realm (0.8)"],
+  threadStateSummary: ["t-secret-realm@tightening urgency=0.6 pressure=0.7"],
   toneTarget: "wuxia intrigue",
   pacingTarget: "tight and rising",
   chapterEndHook: "the spirit tablet splits open at midnight",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { insertStoryRelation } from "../../src/store/store.ts";
+import { upsertProjectedRelation } from "../../src/store/store.ts";
 import { initializeStoryWorld } from "../../src/story/world-state.ts";
 import {
   buildStoryWorldSnapshot,
@@ -13,6 +13,14 @@ describe("story consistency validation", () => {
     const db = createTestDb();
     try {
       initializeStoryWorld(db);
+      upsertProjectedRelation(db, {
+        id: "ssr-ember-seal-owns-shen-mo",
+        fromIdentityId: "a-ember-seal",
+        relation: "OWNS",
+        toIdentityId: "c-shen-mo",
+        visibility: "public",
+        validFromTurn: 1,
+      });
       const worldSnapshot = buildStoryWorldSnapshot(db);
       const issues = validateChapterClaims(worldSnapshot, [
         {
@@ -33,6 +41,14 @@ describe("story consistency validation", () => {
     const db = createTestDb();
     try {
       initializeStoryWorld(db);
+      upsertProjectedRelation(db, {
+        id: "ssr-ember-seal-owns-shen-mo",
+        fromIdentityId: "a-ember-seal",
+        relation: "OWNS",
+        toIdentityId: "c-shen-mo",
+        visibility: "public",
+        validFromTurn: 1,
+      });
       db.prepare(`
         INSERT INTO story_chapters (id, turn_number, pov_id, summary, prose, claims_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -73,6 +89,14 @@ describe("story consistency validation", () => {
     const db = createTestDb();
     try {
       initializeStoryWorld(db);
+      upsertProjectedRelation(db, {
+        id: "ssr-ember-seal-owns-shen-mo",
+        fromIdentityId: "a-ember-seal",
+        relation: "OWNS",
+        toIdentityId: "c-shen-mo",
+        visibility: "public",
+        validFromTurn: 1,
+      });
       db.prepare(`
         INSERT INTO story_chapters (id, turn_number, pov_id, summary, prose, claims_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -92,12 +116,13 @@ describe("story consistency validation", () => {
         ]),
         200,
       );
-      insertStoryRelation(db, {
-        id: "sr-ember-seal-owns-li-yao-later",
-        fromId: "a-ember-seal",
+      upsertProjectedRelation(db, {
+        id: "ssr-ember-seal-owns-li-yao-later",
+        fromIdentityId: "a-ember-seal",
         relation: "OWNS",
-        toId: "c-li-yao",
+        toIdentityId: "c-li-yao",
         visibility: "public",
+        validFromTurn: 3,
       });
 
       const issues = validateRecentChapters(db);
@@ -112,6 +137,14 @@ describe("story consistency validation", () => {
     const db = createTestDb();
     try {
       initializeStoryWorld(db);
+      upsertProjectedRelation(db, {
+        id: "ssr-ember-seal-owns-shen-mo",
+        fromIdentityId: "a-ember-seal",
+        relation: "OWNS",
+        toIdentityId: "c-shen-mo",
+        visibility: "public",
+        validFromTurn: 1,
+      });
       db.prepare(`
         INSERT INTO story_chapters (id, turn_number, pov_id, summary, prose, claims_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -131,12 +164,13 @@ describe("story consistency validation", () => {
         ]),
         200,
       );
-      insertStoryRelation(db, {
-        id: "sr-ember-seal-owns-su-wan-later",
-        fromId: "a-ember-seal",
+      upsertProjectedRelation(db, {
+        id: "ssr-ember-seal-owns-su-wan-later",
+        fromIdentityId: "a-ember-seal",
         relation: "OWNS",
-        toId: "c-su-wan",
+        toIdentityId: "c-su-wan",
         visibility: "public",
+        validFromTurn: 3,
       });
 
       const issues = validateRecentChapters(db);

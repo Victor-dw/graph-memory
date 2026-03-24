@@ -17,6 +17,7 @@ export interface ChapterPacket {
   relationshipHistory: StoryStoredRelation[];
   unresolvedSecrets: StoryNarrativeSignal[];
   activeTensionSummary: string[];
+  threadStateSummary: string[];
   toneTarget: string;
   pacingTarget: string;
   chapterEndHook: string;
@@ -49,6 +50,7 @@ export function buildChapterPacket(
     relationshipHistory: recall.relationships,
     unresolvedSecrets: recall.unresolvedSecrets.length > 0 ? recall.unresolvedSecrets : directorState.unresolvedSecrets,
     activeTensionSummary: summarizeSignals(tensionSource),
+    threadStateSummary: summarizeThreadState(recall.threads),
     toneTarget: selection.toneTarget,
     pacingTarget: selection.pacingTarget,
     chapterEndHook: selection.hookTarget,
@@ -116,6 +118,17 @@ export function summarizeSignals(signals: StoryNarrativeSignal[]): string[] {
   );
 }
 
+function summarizeThreadState(threads: Array<Record<string, unknown>>): string[] {
+  if (threads.length === 0) return ["No thread-state updates for selected events."];
+  return threads.slice(0, 3).map((thread) => {
+    const id = typeof thread.id === "string" ? thread.id : "unknown-thread";
+    const stage = typeof thread.stage === "string" ? thread.stage : "unknown-stage";
+    const urgency = typeof thread.urgency === "number" ? thread.urgency : 0;
+    const pressure = typeof thread.pressure === "number" ? thread.pressure : 0;
+    return `${id}@${stage} urgency=${urgency} pressure=${pressure}`;
+  });
+}
+
 function summarizeChapter(packet: ChapterPacket): string {
   const lead = packet.eventSummaries.slice(0, 2).join(" ");
   return `${lead} Hook: ${packet.chapterEndHook}`;
@@ -132,6 +145,7 @@ function toRuntimeChapterPacket(packet: ChapterPacket): { turnNumber: number; fo
     relationshipHistory: packet.relationshipHistory,
     unresolvedSecrets: packet.unresolvedSecrets,
     activeTensionSummary: packet.activeTensionSummary,
+    threadStateSummary: packet.threadStateSummary,
     toneTarget: packet.toneTarget,
     pacingTarget: packet.pacingTarget,
     chapterEndHook: packet.chapterEndHook,

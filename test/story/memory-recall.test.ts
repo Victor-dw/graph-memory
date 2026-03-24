@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createStoryWorldState } from "../../src/story/world-state.ts";
 import { createSeedWorld } from "../../src/story/bootstrap.ts";
-import { insertStoryEvent, insertStoryRelation } from "../../src/store/store.ts";
+import { insertStoryEvent, insertStoryRelation, upsertProjectedRelation } from "../../src/store/store.ts";
 import { buildRecallPacket } from "../../src/story/memory/recall.ts";
 import { createTestDb } from "../helpers.ts";
 
@@ -157,6 +157,142 @@ describe("story memory recall", () => {
       const suWanPacket = buildRecallPacket(db, { povId: "c-su-wan", eventIds: [] });
       expect(liYaoPacket.relationships.some((relation) => relation.id === "sr-unknown-visibility")).toBe(true);
       expect(suWanPacket.relationships.some((relation) => relation.id === "sr-unknown-visibility")).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prefers projected v2 relationships and thread-state enriched threads when available", () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+      insertStoryEvent(db, {
+        id: "sev-20-1",
+        turnNumber: 20,
+        type: "artifact-showdown",
+        summary: "The Ember Seal showdown erupts in full view.",
+        visibility: "public",
+        observers: [],
+        payload: {
+          threadId: "t-secret-realm",
+          subjectId: "a-ember-seal",
+          predicate: "IN_CONFLICT",
+          objectId: "conflict:a-ember-seal",
+        },
+      });
+      db.prepare(`
+        INSERT INTO story_event_ledger (
+          id, turn_number, event_type, event_phase, summary, visibility, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "sle-sev-20-1",
+        20,
+        "artifact-showdown",
+        "resolution",
+        "Ledger: The Ember Seal showdown erupts in full view.",
+        "public",
+        JSON.stringify({
+          threadId: "t-secret-realm",
+          subjectId: "a-ember-seal",
+          predicate: "IN_CONFLICT",
+          objectId: "conflict:a-ember-seal",
+        }),
+        Date.now(),
+      );
+      db.prepare(`
+        INSERT INTO story_thread_state (
+          thread_id, stage, urgency, pressure, focus_identity_id, last_advanced_turn, last_event_id,
+          blocking_factors_json, pending_payoffs_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "t-secret-realm",
+        "showdown",
+        0.9,
+        0.95,
+        "c-li-yao",
+        20,
+        "sle-sev-20-1",
+        "[]",
+        '["stabilize-t-secret-realm"]',
+        Date.now(),
+      );
+      upsertProjectedRelation(db, {
+        id: "ssr-li-yao-ally-su-wan",
+        fromIdentityId: "c-li-yao",
+        relation: "ALLY_OF",
+        toIdentityId: "c-su-wan",
+        visibility: "public",
+        derivedFromEventId: "sle-sev-20-1",
+        validFromTurn: 20,
+      });
+
+      const packet = buildRecallPacket(db, { povId: "c-li-yao", eventIds: ["sev-20-1"] });
+
+      expect(packet.relatedEvents.map((event) => event.summary)).toContain(
+        "Ledger: The Ember Seal showdown erupts in full view.",
+      );
+      expect(packet.relationships.some((relation) => relation.id === "ssr-li-yao-ally-su-wan")).toBe(true);
+      expect(packet.relationships.some((relation) => relation.id === "sr-li-yao-knows-su-wan")).toBe(false);
+      expect(packet.threads).toEqual([
+        expect.objectContaining({
+          id: "t-secret-realm",
+          stage: "showdown",
+          lastEventId: "sle-sev-20-1",
+          lastAdvancedTurn: 20,
+        }),
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not surface EXECUTES relations in recall output", () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+      upsertProjectedRelation(db, {
+        id: "ssr-li-yao-executes-conceal",
+        fromIdentityId: "c-li-yao",
+        relation: "EXECUTES",
+        toIdentityId: "c-su-wan",
+        visibility: "public",
+      });
+      upsertProjectedRelation(db, {
+        id: "ssr-li-yao-knows-su-wan",
+        fromIdentityId: "c-li-yao",
+        relation: "KNOWS",
+        toIdentityId: "c-su-wan",
+        visibility: "public",
+      });
+
+      const packet = buildRecallPacket(db, { povId: "c-li-yao", eventIds: [] });
+
+      expect(packet.relationships.some((relation) => relation.relation === "EXECUTES")).toBe(false);
+      expect(packet.relationships.some((relation) => relation.relation === "KNOWS")).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("falls back to legacy relationships when projected matches are filtered out as EXECUTES", () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+      upsertProjectedRelation(db, {
+        id: "ssr-li-yao-executes-only",
+        fromIdentityId: "c-li-yao",
+        relation: "EXECUTES",
+        toIdentityId: "c-su-wan",
+        visibility: "public",
+      });
+
+      const packet = buildRecallPacket(db, { povId: "c-li-yao", eventIds: [] });
+
+      expect(packet.relationships.some((relation) => relation.relation === "EXECUTES")).toBe(false);
+      expect(packet.relationships.some((relation) => relation.id === "sr-li-yao-knows-su-wan")).toBe(true);
     } finally {
       db.close();
     }
