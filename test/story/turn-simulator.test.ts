@@ -310,6 +310,11 @@ describe("story turn simulator", () => {
       const world = createStoryWorldState(db);
       world.saveSeed(createSeedWorld());
       db.prepare("DELETE FROM story_entities WHERE id = ?").run("a-ember-seal");
+      db.prepare(`
+        DELETE FROM story_state_relations
+        WHERE from_identity_id = ? OR to_identity_id = ?
+      `).run("a-ember-seal", "a-ember-seal");
+      db.prepare("DELETE FROM story_identities WHERE id = ?").run("a-ember-seal");
 
       await runStoryTurn(db, {
         turnNumber: 13,

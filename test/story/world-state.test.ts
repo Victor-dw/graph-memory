@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSeedWorld } from "../../src/story/bootstrap.ts";
+import { buildStoryWorldSnapshot } from "../../src/story/memory/consistency.ts";
 import { createStoryWorldState } from "../../src/story/world-state.ts";
 import { createTestDb } from "../helpers.ts";
 
@@ -19,6 +20,40 @@ describe("story world-state persistence", () => {
       }>;
       expect(relationRows).toHaveLength(3);
       expect(relationRows[0]).toEqual({ from_id: "a-ember-seal", relation: "OWNS", to_id: "c-shen-mo" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("mirrors durable OWNS relations into projected canonical state during seed save", () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+
+      const snapshot = buildStoryWorldSnapshot(db);
+      const projectedOwns = snapshot.projectedRelations?.find((relation) =>
+        relation.fromIdentityId === "a-ember-seal"
+        && relation.relation === "OWNS"
+        && relation.toIdentityId === "c-shen-mo"
+      );
+      const identityRows = db.prepare(`
+        SELECT id
+        FROM story_identities
+        WHERE id IN ('a-ember-seal', 'c-shen-mo')
+        ORDER BY id ASC
+      `).all() as Array<{ id: string }>;
+
+      expect(projectedOwns).toEqual(expect.objectContaining({
+        id: "ssr-a-ember-seal-OWNS-c-shen-mo",
+        fromIdentityId: "a-ember-seal",
+        relation: "OWNS",
+        toIdentityId: "c-shen-mo",
+      }));
+      expect(identityRows).toEqual([
+        { id: "a-ember-seal" },
+        { id: "c-shen-mo" },
+      ]);
     } finally {
       db.close();
     }

@@ -12,7 +12,24 @@ export interface ProjectedRelationRecord {
   updatedAt?: number;
 }
 
+const DURABLE_CANONICAL_RELATIONS = new Set<string>([
+  "OWNS",
+  "LOCATED_IN",
+]);
+
 const warnedProjectionSkips = new Set<string>();
+
+export function buildProjectedRelationId(
+  fromIdentityId: string,
+  relation: string,
+  toIdentityId: string,
+): string {
+  return `ssr-${fromIdentityId}-${relation}-${toIdentityId}`;
+}
+
+export function isDurableCanonicalRelation(relation: string): boolean {
+  return DURABLE_CANONICAL_RELATIONS.has(relation);
+}
 
 export function upsertProjectedRelation(
   db: DatabaseSyncInstance,

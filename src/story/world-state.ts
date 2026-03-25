@@ -4,6 +4,7 @@ import { saveDirectorState, type NarrativeDirectorState } from "./narrative/stat
 import type { SeedWorld, StoryCharacter, StoryThread } from "./types.ts";
 import { propagateBeliefsFromEvents } from "./beliefs.ts";
 import type { StoryWorldSnapshot } from "./memory/consistency.ts";
+import { buildProjectedRelationId, isDurableCanonicalRelation } from "./memory/projection.ts";
 import {
   insertStoryIdentity,
   insertStoryEntities,
@@ -116,6 +117,16 @@ export function createStoryWorldState(db: DatabaseSyncInstance): StoryWorldState
 
         for (const relation of canonicalRelations) {
           insertStoryRelation(db, relation);
+          if (isDurableCanonicalRelation(relation.relation)) {
+            upsertProjectedRelation(db, {
+              id: buildProjectedRelationId(relation.fromId, relation.relation, relation.toId),
+              fromIdentityId: relation.fromId,
+              relation: relation.relation,
+              toIdentityId: relation.toId,
+              visibility: relation.visibility === "private" ? "private" : "public",
+              strength: relation.intensity,
+            });
+          }
         }
         for (const signal of canonicalSignals) {
           upsertStoryNarrativeSignal(db, signal);
@@ -381,24 +392,29 @@ function toProjectedSnapshotRelations(world: StoryRestoreSnapshot["world"]) {
     return (world.projectedRelations ?? []).filter((relation) => relation.relation !== "EXECUTES");
   }
 
-  return world.relations.map((relation) => ({
-    id: relation.id,
-    fromIdentityId: relation.fromId,
-    relation: relation.relation,
-    toIdentityId: relation.toId,
-    visibility: relation.visibility,
-    strength: relation.intensity,
-    derivedFromEventId: relation.sourceEventId,
-    validFromTurn: relation.validFromTurn,
-    updatedAt: relation.updatedAt,
-  })).filter((relation) =>
-    relation.relation !== "EXECUTES"
-    && (
-      relation.id.startsWith("ssr-")
-      || typeof relation.validFromTurn === "number"
-      || relation.derivedFromEventId?.startsWith("sle-") === true
+  return world.relations
+    .filter((relation) =>
+      relation.relation !== "EXECUTES"
+      && (
+        isDurableCanonicalRelation(relation.relation)
+        || relation.id.startsWith("ssr-")
+        || typeof relation.validFromTurn === "number"
+        || relation.sourceEventId?.startsWith("sle-") === true
+      )
     )
-  );
+    .map((relation) => ({
+      id: relation.id.startsWith("ssr-")
+        ? relation.id
+        : buildProjectedRelationId(relation.fromId, relation.relation, relation.toId),
+      fromIdentityId: relation.fromId,
+      relation: relation.relation,
+      toIdentityId: relation.toId,
+      visibility: relation.visibility,
+      strength: relation.intensity,
+      derivedFromEventId: relation.sourceEventId,
+      validFromTurn: relation.validFromTurn,
+      updatedAt: relation.updatedAt,
+    }));
 }
 
 function toSnapshotThreadState(world: StoryRestoreSnapshot["world"]): StoryThreadStateRecord[] {

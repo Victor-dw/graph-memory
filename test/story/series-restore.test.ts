@@ -129,11 +129,14 @@ describe("story series restore", () => {
       await restoreSeriesRun(targetDb, { bundlePath: bundle.bundlePath });
       const restoredWorld = buildStoryWorldSnapshot(targetDb);
 
-      expect(restoredWorld.entities.map((entity) => entity.id)).toEqual(sourceWorld.entities.map((entity) => entity.id));
+      expect(restoredWorld.entities.map((entity) => entity.id).sort()).toEqual(
+        sourceWorld.entities.map((entity) => entity.id).sort(),
+      );
       expect(restoredWorld.activeThreads).toEqual(sourceWorld.activeThreads);
       expect(restoredWorld.narrativeSignals.map((signal) => signal.id)).toEqual(
         sourceWorld.narrativeSignals.map((signal) => signal.id),
       );
+      expect(readValueCount(targetDb, "story_state_relations", "id", "ssr-a-ember-seal-OWNS-c-shen-mo")).toBe(1);
       expect(readValueCount(targetDb, "story_state_relations", "id", "ssr-a-ember-seal-IN_CONFLICT-conflict:a-ember-seal")).toBe(0);
       expect(readValueCount(targetDb, "story_thread_state", "thread_id", "t-secret-realm")).toBe(1);
       expect(sortBeliefs(buildStoryBeliefSnapshot(targetDb))).toEqual(sourceBeliefs);
