@@ -182,6 +182,69 @@ describe("story:long-run cli", () => {
     }
   });
 
+  it("starts a fresh first iteration for a brand-new series even when long-run reuses a dirty shared DB", async () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-series-"));
+    const controlRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-control-"));
+    const dbPath = path.join(seriesRoot, "shared.sqlite");
+
+    process.env.NOVEL_LLM_MODE = "anthropic-compatible";
+    process.env.NOVEL_DB_PATH = dbPath;
+    process.env.NOVEL_CHAPTER_EVERY_TURNS = "3";
+    process.env.NOVEL_RESET_ON_START = "0";
+
+    try {
+      await runStoryLongRunCli([
+        "--series=mainline-a",
+        "--turns=3",
+        "--stub-model",
+        "--max-runs=1",
+        "--duration-hours=1",
+        "--label=seed-dirty-db",
+        `--series-root=${seriesRoot}`,
+        `--control-dir=${controlRoot}`,
+      ]);
+
+      await runStoryLongRunCli([
+        "--series=mainline-b",
+        "--turns=3",
+        "--stub-model",
+        "--max-runs=1",
+        "--duration-hours=1",
+        "--label=fresh-on-dirty-db",
+        `--series-root=${seriesRoot}`,
+        `--control-dir=${controlRoot}`,
+      ]);
+
+      const metadata = readSeriesMetadata(seriesRoot, "mainline-b");
+      const sessionDir = path.join(controlRoot, "fresh-on-dirty-db");
+      const summary = JSON.parse(
+        readFileSync(path.join(sessionDir, "summary.json"), "utf8"),
+      ) as {
+        status: string;
+        completedRuns: number;
+        lastRunId: string | null;
+      };
+      const events = readJsonLines(path.join(sessionDir, "events.jsonl"));
+      const runSucceededEvent = events.find((event) => event.type === "run-succeeded");
+
+      expect(metadata.runCount).toBe(1);
+      expect(metadata.runs[0]?.continuedFromRunId).toBeNull();
+      expect(readWorldLogTurnNumbers(metadata.runs[0]?.path ?? "")).toEqual([1, 2, 3]);
+      expect(summary.status).toBe("completed");
+      expect(summary.completedRuns).toBe(1);
+      expect(summary.lastRunId).toBe(metadata.latestRunId);
+      expect(runSucceededEvent).toEqual(expect.objectContaining({
+        latestRunId: metadata.latestRunId,
+        bundleMetrics: expect.objectContaining({
+          projectedRelations: expect.any(Number),
+        }),
+      }));
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+      rmSync(controlRoot, { recursive: true, force: true });
+    }
+  });
+
   it("marks metricsUnavailable when bundle metrics files are missing or invalid but still completes the run", async () => {
     const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-series-"));
     const controlRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-control-"));
@@ -266,4 +329,12 @@ function readJsonLines(filePath: string): Array<Record<string, unknown>> {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function readWorldLogTurnNumbers(bundlePath: string): number[] {
+  return readFileSync(path.join(bundlePath, "world-log.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => (JSON.parse(line) as { turnNumber: number }).turnNumber);
 }

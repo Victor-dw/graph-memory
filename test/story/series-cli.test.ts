@@ -241,6 +241,53 @@ describe("story:series cli", () => {
     }
   });
 
+  it("starts a brand-new series from a fresh world even when the shared DB already has prior story state", async () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-cli-"));
+    const sharedDbPath = path.join(seriesRoot, "shared.sqlite");
+
+    try {
+      await execa("npm", [
+        "run",
+        "story:series",
+        "--",
+        "--series=mainline-a",
+        "--turns=3",
+        "--stub-model",
+        `--series-root=${seriesRoot}`,
+      ], {
+        cwd: repoRoot,
+        env: buildStoryEnv(sharedDbPath),
+      });
+
+      const pollutedDbRun = await execa("npm", [
+        "run",
+        "story:series",
+        "--",
+        "--series=mainline-b",
+        "--turns=3",
+        "--stub-model",
+        `--series-root=${seriesRoot}`,
+      ], {
+        cwd: repoRoot,
+        env: buildStoryEnv(sharedDbPath),
+      });
+
+      expect(pollutedDbRun.stdout).toContain("series=mainline-b");
+      expect(pollutedDbRun.stdout).toContain("mode=continue");
+
+      const freshSeries = readSeriesMetadata(seriesRoot, "mainline-b");
+      expect(freshSeries.runCount).toBe(1);
+      expect(freshSeries.runs[0]?.continuedFromRunId).toBeNull();
+      expect(readWorldLogTurnNumbers(freshSeries.runs[0]?.path ?? "")).toEqual([1, 2, 3]);
+      expect(readProjectedRelationIds(freshSeries.runs[0]?.path ?? "")).toEqual(expect.arrayContaining([
+        "ssr-a-ember-seal-LOCATED_IN-l-fallen-realm",
+        "ssr-a-ember-seal-OWNS-c-shen-mo",
+      ]));
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not append a failed run when restore input is already corrupt", async () => {
     const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-series-cli-"));
     const dbPathA = path.join(seriesRoot, "db-a.sqlite");
@@ -319,4 +366,13 @@ function readWorldLogTurnNumbers(bundlePath: string): number[] {
     .split("\n")
     .filter(Boolean)
     .map((line) => (JSON.parse(line) as { turnNumber: number }).turnNumber);
+}
+
+function readProjectedRelationIds(bundlePath: string): string[] {
+  const world = JSON.parse(
+    readFileSync(path.join(bundlePath, "state", "final-world.json"), "utf8"),
+  ) as {
+    projectedRelations?: Array<{ id: string }>;
+  };
+  return (world.projectedRelations ?? []).map((relation) => relation.id);
 }

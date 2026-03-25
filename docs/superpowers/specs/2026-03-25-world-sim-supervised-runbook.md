@@ -45,7 +45,13 @@ Readiness decision:
 
 ## Quick Start (Supervised Smoke)
 
-Goal: one small run using real provider wiring, with a clean series root, then validate artifacts.
+Goal: one small run using real provider wiring, with an isolated series root, then validate artifacts.
+
+Important invariant:
+
+- `--series-root` isolates run bundles and series metadata.
+- a brand-new series is expected to start from a fresh seeded world at turn `1` even if `NOVEL_DB_PATH` points to a reused/shared runtime database.
+- only continuation or branch runs should inherit prior state via bundle restore.
 
 Preflight (required before claiming anything is “ready”):
 
@@ -242,6 +248,7 @@ Hard failures (stop and investigate):
 - `npm test` fails or `npm run build` fails on the exact commit being run.
 - `story:series` or `story:long-run` exits non-zero (uncaught error).
 - continuation restore fails (cannot resume from last successful bundle).
+- the first run of a brand-new series does not start at turn `1`, or unexpectedly behaves like a continuation (`continuedFromRunId != null`).
 - required bundle files are missing (`final-world.json`, `final-beliefs.json`, `final-director.json`, `consistency.json`).
 - `consistency.json` contains any issues (`consistency_issues > 0`).
 - any `EXECUTES` leakage appears in schema v2 projected relations (`executes_in_projected > 0`).
@@ -270,4 +277,3 @@ Practical “today” decision (2026-03-25):
 - Do not fully shift to schema v2-only reads yet.
 - Do keep `dual-write`.
 - Do treat the branch as stable enough for additional supervised runs and memory-quality iteration.
-

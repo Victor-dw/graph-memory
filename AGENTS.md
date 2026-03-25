@@ -99,6 +99,7 @@ Important tests:
 - `test/story/chapter-generator.test.ts`
 - `test/story/consistency.test.ts`
 - `test/story/run-bundle.test.ts`
+- `test/story/series-cli.test.ts`
 - `test/story/series-restore.test.ts`
 - `test/story/schema-v2-store.test.ts`
 - `test/story/thread-state.test.ts`
@@ -198,6 +199,8 @@ When touching continuation:
   - `final-beliefs.json`
   - `final-director.json`
 - keep restore fail-fast behavior for missing or invalid required snapshots
+- a brand-new series with no `latestRunId` must start from a fresh seeded world at turn `1`, even if `NOVEL_DB_PATH` points at a reused/shared SQLite file
+- only continuation or branch runs may inherit prior world state through bundle restore
 
 When touching projected state:
 

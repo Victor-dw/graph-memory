@@ -23,6 +23,7 @@ import {
   writeSeriesMetadata,
 } from "./series/metadata.ts";
 import { restoreSeriesRun } from "./series/restore.ts";
+import { resetStoryWorld } from "./world-state.ts";
 
 type StorySeriesCliMode = "continue" | "branch";
 
@@ -100,6 +101,8 @@ export async function runStorySeriesCli(argv: string[] = process.argv.slice(2)) 
         bundlePath: resolveSeriesRunPath(seriesRoot, restoreSeriesId, continuedFromRunId),
         resumeTurnNumber,
       });
+    } else if (mode === "continue") {
+      resetStoryWorld(db);
     }
 
     if (mode === "branch") {

@@ -327,6 +327,17 @@ export function restoreStorySnapshot(
   }
 }
 
+export function resetStoryWorld(db: DatabaseSyncInstance): void {
+  db.exec("BEGIN");
+  try {
+    clearPersistedStorySnapshot(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function listCanonicalNarrativeSignals(presentIds: Set<string>) {
   return [
     {
