@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { readTurnsArg } from "./cli.ts";
 import { loadStoryConfig } from "./config.ts";
+import { readBundleMetrics, type StoryRunBundleMetrics } from "./output/bundle-metrics.ts";
 import { runStorySeriesCli } from "./series-cli.ts";
 import { readSeriesMetadata } from "./series/metadata.ts";
 import { resolveSeriesRoot } from "./series/layout.ts";
@@ -33,6 +34,9 @@ interface StoryLongRunSessionSummary {
   failedRuns: number;
   lastRunId: string | null;
   lastBundlePath: string | null;
+  lastRunMetrics: StoryRunBundleMetrics | null;
+  metricsUnavailable: boolean;
+  lastRunMetricsWarning: string | null;
   failureMessage: string | null;
 }
 
@@ -100,6 +104,9 @@ export async function runStoryLongRunCli(
     failedRuns: 0,
     lastRunId: null,
     lastBundlePath: null,
+    lastRunMetrics: null,
+    metricsUnavailable: false,
+    lastRunMetricsWarning: null,
     failureMessage: null,
   };
   writeSummary(summary);
@@ -183,6 +190,16 @@ export async function runStoryLongRunCli(
       summary.completedRuns += 1;
       summary.lastRunId = latestRun.runId;
       summary.lastBundlePath = latestRun.path ?? null;
+      const metricsResult = collectBundleMetrics(latestRun.path);
+      if (metricsResult.metricsUnavailable) {
+        summary.lastRunMetrics = null;
+        summary.metricsUnavailable = true;
+        summary.lastRunMetricsWarning = metricsResult.warning;
+      } else {
+        summary.lastRunMetrics = metricsResult.bundleMetrics;
+        summary.metricsUnavailable = false;
+        summary.lastRunMetricsWarning = null;
+      }
       summary.updatedAt = runtime.now().toISOString();
       writeSummary(summary);
       appendEvent(eventsPath, {
@@ -191,6 +208,9 @@ export async function runStoryLongRunCli(
         completedRuns: summary.completedRuns,
         latestRunId: latestRun.runId,
         latestBundlePath: latestRun.path,
+        bundleMetrics: metricsResult.metricsUnavailable ? undefined : metricsResult.bundleMetrics,
+        metricsUnavailable: metricsResult.metricsUnavailable || undefined,
+        warning: metricsResult.metricsUnavailable ? metricsResult.warning : undefined,
       });
 
       if (cooldownSeconds > 0) {
@@ -346,4 +366,16 @@ function findRunById(
     }
   }
   return undefined;
+}
+
+function collectBundleMetrics(
+  bundlePath: string | undefined,
+): ReturnType<typeof readBundleMetrics> {
+  if (!bundlePath) {
+    return {
+      metricsUnavailable: true,
+      warning: "[story-long-run] latest run bundle path missing in series metadata",
+    };
+  }
+  return readBundleMetrics(bundlePath);
 }

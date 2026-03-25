@@ -2,7 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readSeriesMetadata } from "../../src/story/series/metadata.ts";
+import {
+  appendSeriesRun,
+  createRootSeriesMetadata,
+  readSeriesMetadata,
+  writeSeriesMetadata,
+} from "../../src/story/series/metadata.ts";
 import { runStoryLongRunCli } from "../../src/story/long-run-cli.ts";
 
 const envKeys = [
@@ -63,7 +68,18 @@ describe("story:long-run cli", () => {
         failedRuns: number;
         lastRunId: string | null;
         stopFilePath: string;
+        lastRunMetrics?: {
+          relations: number;
+          projectedRelations: number;
+          threadState: number;
+          identities: number;
+          executes_in_projected: number;
+          executes_in_legacy: number;
+          consistency_issues: number;
+        };
       };
+      const events = readJsonLines(path.join(sessionDir, "events.jsonl"));
+      const runSucceededEvent = events.find((event) => event.type === "run-succeeded");
 
       expect(metadata.runCount).toBe(2);
       expect(metadata.totalChapterCount).toBe(2);
@@ -72,7 +88,27 @@ describe("story:long-run cli", () => {
       expect(summary.failedRuns).toBe(0);
       expect(summary.lastRunId).toBe(metadata.latestRunId);
       expect(summary.stopFilePath).toBe(path.join(sessionDir, "STOP"));
+      expect(summary.lastRunMetrics).toEqual(expect.objectContaining({
+        relations: expect.any(Number),
+        projectedRelations: expect.any(Number),
+        threadState: expect.any(Number),
+        identities: expect.any(Number),
+        executes_in_projected: expect.any(Number),
+        executes_in_legacy: expect.any(Number),
+        consistency_issues: expect.any(Number),
+      }));
       expect(existsSync(path.join(sessionDir, "events.jsonl"))).toBe(true);
+      expect(runSucceededEvent).toEqual(expect.objectContaining({
+        bundleMetrics: expect.objectContaining({
+          relations: expect.any(Number),
+          projectedRelations: expect.any(Number),
+          threadState: expect.any(Number),
+          identities: expect.any(Number),
+          executes_in_projected: expect.any(Number),
+          executes_in_legacy: expect.any(Number),
+          consistency_issues: expect.any(Number),
+        }),
+      }));
     } finally {
       rmSync(seriesRoot, { recursive: true, force: true });
       rmSync(controlRoot, { recursive: true, force: true });
@@ -145,4 +181,89 @@ describe("story:long-run cli", () => {
       rmSync(controlRoot, { recursive: true, force: true });
     }
   });
+
+  it("marks metricsUnavailable when bundle metrics files are missing or invalid but still completes the run", async () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-series-"));
+    const controlRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-control-"));
+    const dbPath = path.join(seriesRoot, "novel.db");
+    let runOrdinal = 0;
+
+    process.env.NOVEL_LLM_MODE = "anthropic-compatible";
+    process.env.NOVEL_DB_PATH = dbPath;
+    process.env.NOVEL_CHAPTER_EVERY_TURNS = "3";
+    process.env.NOVEL_RESET_ON_START = "0";
+
+    try {
+      await runStoryLongRunCli([
+        "--series=mainline-a",
+        "--turns=3",
+        "--stub-model",
+        "--max-runs=1",
+        "--duration-hours=1",
+        "--label=metrics-unavailable",
+        `--series-root=${seriesRoot}`,
+        `--control-dir=${controlRoot}`,
+      ], {
+        runSeries: async () => {
+          runOrdinal += 1;
+          const runId = `stub-run-${runOrdinal}`;
+          const bundlePath = path.join(seriesRoot, "mainline-a", "runs", runId);
+          const stateDir = path.join(bundlePath, "state");
+          mkdirSync(stateDir, { recursive: true });
+          writeFileSync(path.join(stateDir, "final-world.json"), "{invalid json", "utf8");
+
+          const metadata = existsSync(path.join(seriesRoot, "mainline-a", "series.json"))
+            ? readSeriesMetadata(seriesRoot, "mainline-a")
+            : createRootSeriesMetadata({
+              seriesId: "mainline-a",
+              createdAt: "2026-03-25T00:00:00.000Z",
+            });
+
+          writeSeriesMetadata(seriesRoot, appendSeriesRun(metadata, {
+            runId,
+            startedAt: "2026-03-25T00:00:00.000Z",
+            finishedAt: "2026-03-25T00:00:01.000Z",
+            turnCount: 3,
+            chapterCount: 1,
+            path: bundlePath,
+            status: "success",
+          }));
+        },
+      });
+
+      const sessionDir = path.join(controlRoot, "metrics-unavailable");
+      const summary = JSON.parse(
+        readFileSync(path.join(sessionDir, "summary.json"), "utf8"),
+      ) as {
+        status: string;
+        completedRuns: number;
+        failedRuns: number;
+        metricsUnavailable?: boolean;
+        lastRunMetricsWarning?: string;
+      };
+      const events = readJsonLines(path.join(sessionDir, "events.jsonl"));
+      const runSucceededEvent = events.find((event) => event.type === "run-succeeded");
+
+      expect(summary.status).toBe("completed");
+      expect(summary.completedRuns).toBe(1);
+      expect(summary.failedRuns).toBe(0);
+      expect(summary.metricsUnavailable).toBe(true);
+      expect(summary.lastRunMetricsWarning).toEqual(expect.stringContaining("final-world.json"));
+      expect(runSucceededEvent).toEqual(expect.objectContaining({
+        metricsUnavailable: true,
+        warning: expect.stringContaining("final-world.json"),
+      }));
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+      rmSync(controlRoot, { recursive: true, force: true });
+    }
+  });
 });
+
+function readJsonLines(filePath: string): Array<Record<string, unknown>> {
+  return readFileSync(filePath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
