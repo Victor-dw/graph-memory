@@ -25,6 +25,8 @@ export interface StoryCompleteOptions {
   model: string;
   apiKey: string;
   timeoutMs?: number;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
 }
 
 export function createStoryCompleteFn(
@@ -35,7 +37,7 @@ export function createStoryCompleteFn(
   const model = requireStoryCompleteOption(options.model, "NOVEL_LLM_MODEL");
 
   return async (system, user) => {
-    const res = await fetchWithStoryTimeout(`${baseURL.replace(/\/+$/, "")}/chat/completions`, {
+    const res = await fetchWithStoryPolicy(`${baseURL.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -49,7 +51,7 @@ export function createStoryCompleteFn(
         ],
         temperature: 0.1,
       }),
-    }, "OpenAI-compatible", options.timeoutMs);
+    }, "OpenAI-compatible", options);
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       throw new Error(`[story-runtime] OpenAI-compatible LLM API ${res.status}: ${errText.slice(0, 200)}`);
@@ -71,7 +73,7 @@ export function createAnthropicCompatibleCompleteFn(
   const model = requireStoryCompleteOption(options.model, "NOVEL_LLM_MODEL");
 
   return async (system, user) => {
-    const res = await fetchWithStoryTimeout(`${baseURL}/v1/messages`, {
+    const res = await fetchWithStoryPolicy(`${baseURL}/v1/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -84,7 +86,7 @@ export function createAnthropicCompatibleCompleteFn(
         system,
         messages: [{ role: "user", content: user }],
       }),
-    }, "Anthropic-compatible", options.timeoutMs);
+    }, "Anthropic-compatible", options);
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       throw new Error(
@@ -184,6 +186,33 @@ async function fetchWithStoryTimeout(
   }
 }
 
+async function fetchWithStoryPolicy(
+  input: string,
+  init: RequestInit,
+  providerLabel: string,
+  options: Pick<StoryCompleteOptions, "timeoutMs" | "maxRetries" | "retryBaseDelayMs">,
+): Promise<Response> {
+  const maxRetries = options.maxRetries ?? 2;
+  const retryBaseDelayMs = options.retryBaseDelayMs ?? 1_000;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const res = await fetchWithStoryTimeout(input, init, providerLabel, options.timeoutMs);
+      if (!shouldRetryStoryStatus(res.status) || attempt === maxRetries) {
+        return res;
+      }
+    } catch (error) {
+      if (!isRetryableStoryRequestError(error) || attempt === maxRetries) {
+        throw error;
+      }
+    }
+
+    await sleep(retryDelayMs(retryBaseDelayMs, attempt));
+  }
+
+  throw new Error(`[story-runtime] ${providerLabel} LLM request exhausted retries`);
+}
+
 async function readStoryJsonResponse(res: Response, providerLabel: string) {
   try {
     return await res.json() as any;
@@ -212,4 +241,27 @@ function extractAnthropicText(data: any): string {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function isRetryableStoryRequestError(error: unknown): boolean {
+  return error instanceof Error
+    && error.message.includes("LLM request timed out");
+}
+
+function shouldRetryStoryStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function retryDelayMs(baseDelayMs: number, attempt: number): number {
+  if (baseDelayMs <= 0) {
+    return 0;
+  }
+  return baseDelayMs * (2 ** attempt);
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

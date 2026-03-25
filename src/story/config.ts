@@ -8,6 +8,8 @@ export interface StoryRuntimeConfig {
     model: string;
     apiKey: string;
     timeoutMs: number;
+    maxRetries: number;
+    retryBaseDelayMs: number;
   };
   chapterEveryTurns: number;
   resetOnStart: boolean;
@@ -15,6 +17,8 @@ export interface StoryRuntimeConfig {
 
 const STORY_DEFAULT_DB_PATH = "~/.graph-memory/story-memory.db";
 const STORY_DEFAULT_LLM_TIMEOUT_MS = 180_000;
+const STORY_DEFAULT_LLM_MAX_RETRIES = 2;
+const STORY_DEFAULT_LLM_RETRY_BASE_DELAY_MS = 1_000;
 const STORY_LLM_MODES = new Set<StoryRuntimeConfig["llm"]["mode"]>([
   "openai-compatible",
   "anthropic-compatible",
@@ -34,6 +38,8 @@ export function loadStoryConfig(options?: { allowMissingLlmEnv?: boolean }): Sto
       model,
       apiKey,
       timeoutMs: readStoryTimeoutMs(process.env.NOVEL_LLM_TIMEOUT_MS),
+      maxRetries: readStoryMaxRetries(process.env.NOVEL_LLM_MAX_RETRIES),
+      retryBaseDelayMs: readStoryRetryBaseDelayMs(process.env.NOVEL_LLM_RETRY_BASE_DELAY_MS),
     },
     chapterEveryTurns: readChapterEveryTurns(process.env.NOVEL_CHAPTER_EVERY_TURNS),
     resetOnStart: process.env.NOVEL_RESET_ON_START === "1",
@@ -91,6 +97,24 @@ function readStoryTimeoutMs(rawValue: string | undefined): number {
   }
 
   throw new Error("[story-runtime] NOVEL_LLM_TIMEOUT_MS must be a positive integer");
+}
+
+function readStoryMaxRetries(rawValue: string | undefined): number {
+  const parsed = Number(rawValue ?? STORY_DEFAULT_LLM_MAX_RETRIES);
+  if (Number.isInteger(parsed) && parsed >= 0) {
+    return parsed;
+  }
+
+  throw new Error("[story-runtime] NOVEL_LLM_MAX_RETRIES must be a non-negative integer");
+}
+
+function readStoryRetryBaseDelayMs(rawValue: string | undefined): number {
+  const parsed = Number(rawValue ?? STORY_DEFAULT_LLM_RETRY_BASE_DELAY_MS);
+  if (Number.isInteger(parsed) && parsed >= 0) {
+    return parsed;
+  }
+
+  throw new Error("[story-runtime] NOVEL_LLM_RETRY_BASE_DELAY_MS must be a non-negative integer");
 }
 
 function expandStoryPath(pathValue: string): string {

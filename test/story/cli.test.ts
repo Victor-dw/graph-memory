@@ -56,6 +56,8 @@ describe("story model runtime", () => {
       model: "MiniMax-M2.7",
       apiKey: "test-key",
       timeoutMs: 180_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 1_000,
     });
 
     await expect(client.generateChapter({ turnNumber: 1, focus: "sect rivalry" })).rejects.toThrowError(
@@ -84,6 +86,8 @@ describe("story model runtime", () => {
       model: "MiniMax-M2.7",
       apiKey: "test-key",
       timeoutMs: 180_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 1_000,
     });
 
     await expect(
@@ -110,12 +114,76 @@ describe("story model runtime", () => {
       model: "MiniMax-M2.7",
       apiKey: "test-key",
       timeoutMs: 25,
+      maxRetries: 0,
+      retryBaseDelayMs: 0,
     });
 
     await expect(complete("generate chapter", "hung request")).rejects.toThrowError(
       "[story-runtime] Anthropic-compatible LLM request timed out after 25ms",
     );
   }, 3000);
+
+  it("retries transient anthropic-compatible 5xx responses before succeeding", async () => {
+    let attempts = 0;
+    setFetchMock(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(JSON.stringify({
+          type: "error",
+          error: { type: "api_error", message: "temporary overload" },
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        content: [{ type: "text", text: "Recovered on retry." }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const complete = createAnthropicCompatibleCompleteFn({
+      baseURL: "https://api.minimaxi.com/anthropic",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 25,
+      maxRetries: 1,
+      retryBaseDelayMs: 1,
+    });
+
+    await expect(complete("generate chapter", "recover me")).resolves.toBe("Recovered on retry.");
+    expect(attempts).toBe(2);
+  });
+
+  it("does not retry non-retryable anthropic-compatible 4xx responses", async () => {
+    let attempts = 0;
+    setFetchMock(async () => {
+      attempts += 1;
+      return new Response(JSON.stringify({
+        type: "error",
+        error: { type: "invalid_request_error", message: "bad request" },
+      }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const complete = createAnthropicCompatibleCompleteFn({
+      baseURL: "https://api.minimaxi.com/anthropic",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 25,
+      maxRetries: 2,
+      retryBaseDelayMs: 1,
+    });
+
+    await expect(complete("generate chapter", "do not retry")).rejects.toThrowError(
+      "[story-runtime] Anthropic-compatible LLM API 400:",
+    );
+    expect(attempts).toBe(1);
+  });
 });
 
 describe("story:run cli", () => {

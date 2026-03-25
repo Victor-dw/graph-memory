@@ -72,11 +72,17 @@ export function createStoryModelClient(cfg: StoryRuntimeConfig["llm"]): StoryMod
           apiKey: cfg.apiKey,
           baseURL: cfg.baseURL,
           model: cfg.model,
+          timeoutMs: cfg.timeoutMs,
+          maxRetries: cfg.maxRetries,
+          retryBaseDelayMs: cfg.retryBaseDelayMs,
         })
       : createStoryCompleteFn({
           apiKey: cfg.apiKey,
           baseURL: cfg.baseURL,
           model: cfg.model,
+          timeoutMs: cfg.timeoutMs,
+          maxRetries: cfg.maxRetries,
+          retryBaseDelayMs: cfg.retryBaseDelayMs,
         });
 
   return buildStoryModelClient(completeFn);
