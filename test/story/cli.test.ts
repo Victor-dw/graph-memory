@@ -55,6 +55,7 @@ describe("story model runtime", () => {
       baseURL: "https://api.minimaxi.com/anthropic",
       model: "MiniMax-M2.7",
       apiKey: "test-key",
+      timeoutMs: 180_000,
     });
 
     await expect(client.generateChapter({ turnNumber: 1, focus: "sect rivalry" })).rejects.toThrowError(
@@ -82,6 +83,7 @@ describe("story model runtime", () => {
       baseURL: "https://api.example.com/openai",
       model: "MiniMax-M2.7",
       apiKey: "test-key",
+      timeoutMs: 180_000,
     });
 
     await expect(
@@ -91,6 +93,29 @@ describe("story model runtime", () => {
       ),
     ).rejects.toThrowError("[story-runtime] Invalid actor action ranking response");
   });
+
+  it("times out anthropic-compatible requests instead of waiting forever on a hung provider", async () => {
+    setFetchMock(async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const interval = setInterval(() => {
+          if (init?.signal?.aborted) {
+            clearInterval(interval);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          }
+        }, 5);
+      }));
+
+    const complete = createAnthropicCompatibleCompleteFn({
+      baseURL: "https://api.minimaxi.com/anthropic",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 25,
+    });
+
+    await expect(complete("generate chapter", "hung request")).rejects.toThrowError(
+      "[story-runtime] Anthropic-compatible LLM request timed out after 25ms",
+    );
+  }, 3000);
 });
 
 describe("story:run cli", () => {

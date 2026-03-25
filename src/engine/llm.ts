@@ -24,6 +24,7 @@ export interface StoryCompleteOptions {
   baseURL: string;
   model: string;
   apiKey: string;
+  timeoutMs?: number;
 }
 
 export function createStoryCompleteFn(
@@ -34,7 +35,7 @@ export function createStoryCompleteFn(
   const model = requireStoryCompleteOption(options.model, "NOVEL_LLM_MODEL");
 
   return async (system, user) => {
-    const res = await fetch(`${baseURL.replace(/\/+$/, "")}/chat/completions`, {
+    const res = await fetchWithStoryTimeout(`${baseURL.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -48,7 +49,7 @@ export function createStoryCompleteFn(
         ],
         temperature: 0.1,
       }),
-    });
+    }, "OpenAI-compatible", options.timeoutMs);
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       throw new Error(`[story-runtime] OpenAI-compatible LLM API ${res.status}: ${errText.slice(0, 200)}`);
@@ -70,7 +71,7 @@ export function createAnthropicCompatibleCompleteFn(
   const model = requireStoryCompleteOption(options.model, "NOVEL_LLM_MODEL");
 
   return async (system, user) => {
-    const res = await fetch(`${baseURL}/v1/messages`, {
+    const res = await fetchWithStoryTimeout(`${baseURL}/v1/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -83,7 +84,7 @@ export function createAnthropicCompatibleCompleteFn(
         system,
         messages: [{ role: "user", content: user }],
       }),
-    });
+    }, "Anthropic-compatible", options.timeoutMs);
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       throw new Error(
@@ -159,6 +160,30 @@ function requireStoryCompleteOption(value: string, envName: string) {
   throw new Error(`[story-runtime] ${envName} is required for the story runtime`);
 }
 
+async function fetchWithStoryTimeout(
+  input: string,
+  init: RequestInit,
+  providerLabel: string,
+  timeoutMs = 180_000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error(`[story-runtime] ${providerLabel} LLM request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function readStoryJsonResponse(res: Response, providerLabel: string) {
   try {
     return await res.json() as any;
@@ -183,4 +208,8 @@ function extractAnthropicText(data: any): string {
   }
 
   throw new Error("[story-runtime] Anthropic-compatible LLM returned empty content");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }

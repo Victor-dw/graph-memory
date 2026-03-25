@@ -7,12 +7,14 @@ export interface StoryRuntimeConfig {
     baseURL: string;
     model: string;
     apiKey: string;
+    timeoutMs: number;
   };
   chapterEveryTurns: number;
   resetOnStart: boolean;
 }
 
 const STORY_DEFAULT_DB_PATH = "~/.graph-memory/story-memory.db";
+const STORY_DEFAULT_LLM_TIMEOUT_MS = 180_000;
 const STORY_LLM_MODES = new Set<StoryRuntimeConfig["llm"]["mode"]>([
   "openai-compatible",
   "anthropic-compatible",
@@ -31,6 +33,7 @@ export function loadStoryConfig(options?: { allowMissingLlmEnv?: boolean }): Sto
       baseURL,
       model,
       apiKey,
+      timeoutMs: readStoryTimeoutMs(process.env.NOVEL_LLM_TIMEOUT_MS),
     },
     chapterEveryTurns: readChapterEveryTurns(process.env.NOVEL_CHAPTER_EVERY_TURNS),
     resetOnStart: process.env.NOVEL_RESET_ON_START === "1",
@@ -79,6 +82,15 @@ function readChapterEveryTurns(rawValue: string | undefined): number {
   }
 
   throw new Error("[story-runtime] NOVEL_CHAPTER_EVERY_TURNS must be a positive integer");
+}
+
+function readStoryTimeoutMs(rawValue: string | undefined): number {
+  const parsed = Number(rawValue ?? STORY_DEFAULT_LLM_TIMEOUT_MS);
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+
+  throw new Error("[story-runtime] NOVEL_LLM_TIMEOUT_MS must be a positive integer");
 }
 
 function expandStoryPath(pathValue: string): string {
