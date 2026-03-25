@@ -167,7 +167,6 @@ export async function runStoryLongRunCli(
       try {
         await runtime.runSeries(buildSeriesArgv(argv, seriesId, seriesRoot, turns));
       } catch (error) {
-        summary.status = "failed";
         summary.failedRuns += 1;
         summary.failureMessage = error instanceof Error ? error.message : String(error);
         summary.updatedAt = runtime.now().toISOString();
@@ -178,7 +177,10 @@ export async function runStoryLongRunCli(
           failedRuns: summary.failedRuns,
           message: summary.failureMessage,
         });
-        throw error;
+        if (cooldownSeconds > 0 && shouldWaitForNextIteration(summary, stopFilePath, maxRuns, deadlineAt, runtime.now())) {
+          await runtime.sleep(cooldownSeconds * 1000);
+        }
+        continue;
       }
 
       const metadata = readSeriesMetadata(seriesRoot, seriesId);
@@ -213,7 +215,7 @@ export async function runStoryLongRunCli(
         warning: metricsResult.metricsUnavailable ? metricsResult.warning : undefined,
       });
 
-      if (cooldownSeconds > 0) {
+      if (cooldownSeconds > 0 && shouldWaitForNextIteration(summary, stopFilePath, maxRuns, deadlineAt, runtime.now())) {
         await runtime.sleep(cooldownSeconds * 1000);
       }
     }
@@ -378,4 +380,20 @@ function collectBundleMetrics(
     };
   }
   return readBundleMetrics(bundlePath);
+}
+
+function shouldWaitForNextIteration(
+  summary: Pick<StoryLongRunSessionSummary, "completedRuns">,
+  stopFilePath: string,
+  maxRuns: number | undefined,
+  deadlineAt: string,
+  now: Date,
+): boolean {
+  if (existsSync(stopFilePath)) {
+    return false;
+  }
+  if (maxRuns !== undefined && summary.completedRuns >= maxRuns) {
+    return false;
+  }
+  return now.toISOString() < deadlineAt;
 }

@@ -9,6 +9,7 @@ import {
   writeSeriesMetadata,
 } from "../../src/story/series/metadata.ts";
 import { runStoryLongRunCli } from "../../src/story/long-run-cli.ts";
+import { runStorySeriesCli } from "../../src/story/series-cli.ts";
 
 const envKeys = [
   "NOVEL_LLM_MODE",
@@ -316,6 +317,99 @@ describe("story:long-run cli", () => {
         metricsUnavailable: true,
         warning: expect.stringContaining("final-world.json"),
       }));
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+      rmSync(controlRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("records a failed iteration, cools down, and keeps running until later iterations succeed", async () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-series-"));
+    const controlRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-control-"));
+    const dbPath = path.join(seriesRoot, "novel.db");
+    const sleepCalls: number[] = [];
+    let attempt = 0;
+
+    process.env.NOVEL_LLM_MODE = "anthropic-compatible";
+    process.env.NOVEL_DB_PATH = dbPath;
+    process.env.NOVEL_CHAPTER_EVERY_TURNS = "3";
+    process.env.NOVEL_RESET_ON_START = "0";
+
+    try {
+      await runStoryLongRunCli([
+        "--series=mainline-a",
+        "--turns=3",
+        "--stub-model",
+        "--max-runs=2",
+        "--duration-hours=1",
+        "--cooldown-seconds=5",
+        "--label=recovers-after-failure",
+        `--series-root=${seriesRoot}`,
+        `--control-dir=${controlRoot}`,
+      ], {
+        runSeries: async (argv) => {
+          attempt += 1;
+          if (attempt === 1) {
+            throw new Error("transient provider 500");
+          }
+          return runStorySeriesCli(argv);
+        },
+        sleep: async (ms) => {
+          sleepCalls.push(ms);
+        },
+      });
+
+      const metadata = readSeriesMetadata(seriesRoot, "mainline-a");
+      const sessionDir = path.join(controlRoot, "recovers-after-failure");
+      const summary = JSON.parse(
+        readFileSync(path.join(sessionDir, "summary.json"), "utf8"),
+      ) as {
+        status: string;
+        completedRuns: number;
+        failedRuns: number;
+        lastRunId: string | null;
+        failureMessage: string | null;
+        lastRunMetrics?: {
+          projectedRelations: number;
+        };
+      };
+      const events = readJsonLines(path.join(sessionDir, "events.jsonl"));
+      const eventTypes = events.map((event) => event.type);
+      const runFailedEvent = events.find((event) => event.type === "run-failed");
+      const runSucceededEvents = events.filter((event) => event.type === "run-succeeded");
+
+      expect(metadata.runCount).toBe(2);
+      expect(metadata.totalChapterCount).toBe(2);
+      expect(summary.status).toBe("completed");
+      expect(summary.completedRuns).toBe(2);
+      expect(summary.failedRuns).toBe(1);
+      expect(summary.lastRunId).toBe(metadata.latestRunId);
+      expect(summary.failureMessage).toBe("transient provider 500");
+      expect(summary.lastRunMetrics).toEqual(expect.objectContaining({
+        projectedRelations: expect.any(Number),
+      }));
+      expect(runFailedEvent).toEqual(expect.objectContaining({
+        failedRuns: 1,
+        message: "transient provider 500",
+      }));
+      expect(runSucceededEvents).toHaveLength(2);
+      expect(runSucceededEvents.at(-1)).toEqual(expect.objectContaining({
+        latestRunId: metadata.latestRunId,
+        bundleMetrics: expect.objectContaining({
+          projectedRelations: expect.any(Number),
+        }),
+      }));
+      expect(eventTypes).toEqual([
+        "session-started",
+        "run-started",
+        "run-failed",
+        "run-started",
+        "run-succeeded",
+        "run-started",
+        "run-succeeded",
+        "session-completed",
+      ]);
+      expect(sleepCalls).toEqual([5000, 5000]);
     } finally {
       rmSync(seriesRoot, { recursive: true, force: true });
       rmSync(controlRoot, { recursive: true, force: true });
