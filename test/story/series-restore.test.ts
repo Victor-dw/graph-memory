@@ -136,6 +136,7 @@ describe("story series restore", () => {
       expect(restoredWorld.narrativeSignals.map((signal) => signal.id)).toEqual(
         sourceWorld.narrativeSignals.map((signal) => signal.id),
       );
+      expect(readValueCount(targetDb, "story_state_relations", "id", "ssr-a-ember-seal-LOCATED_IN-l-fallen-realm")).toBe(1);
       expect(readValueCount(targetDb, "story_state_relations", "id", "ssr-a-ember-seal-OWNS-c-shen-mo")).toBe(1);
       expect(readValueCount(targetDb, "story_state_relations", "id", "ssr-a-ember-seal-IN_CONFLICT-conflict:a-ember-seal")).toBe(0);
       expect(readValueCount(targetDb, "story_thread_state", "thread_id", "t-secret-realm")).toBe(1);

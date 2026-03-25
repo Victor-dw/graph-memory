@@ -18,8 +18,10 @@ describe("story world-state persistence", () => {
         relation: string;
         to_id: string;
       }>;
-      expect(relationRows).toHaveLength(3);
-      expect(relationRows[0]).toEqual({ from_id: "a-ember-seal", relation: "OWNS", to_id: "c-shen-mo" });
+      expect(relationRows).toHaveLength(4);
+      expect(relationRows).toEqual(expect.arrayContaining([
+        { from_id: "a-ember-seal", relation: "OWNS", to_id: "c-shen-mo" },
+      ]));
     } finally {
       db.close();
     }
@@ -53,6 +55,40 @@ describe("story world-state persistence", () => {
       expect(identityRows).toEqual([
         { id: "a-ember-seal" },
         { id: "c-shen-mo" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("mirrors durable LOCATED_IN relations into projected canonical state during seed save", () => {
+    const db = createTestDb();
+    try {
+      const world = createStoryWorldState(db);
+      world.saveSeed(createSeedWorld());
+
+      const snapshot = buildStoryWorldSnapshot(db);
+      const projectedLocatedIn = snapshot.projectedRelations?.find((relation) =>
+        relation.fromIdentityId === "a-ember-seal"
+        && relation.relation === "LOCATED_IN"
+        && relation.toIdentityId === "l-fallen-realm"
+      );
+      const identityRows = db.prepare(`
+        SELECT id
+        FROM story_identities
+        WHERE id IN ('a-ember-seal', 'l-fallen-realm')
+        ORDER BY id ASC
+      `).all() as Array<{ id: string }>;
+
+      expect(projectedLocatedIn).toEqual(expect.objectContaining({
+        id: "ssr-a-ember-seal-LOCATED_IN-l-fallen-realm",
+        fromIdentityId: "a-ember-seal",
+        relation: "LOCATED_IN",
+        toIdentityId: "l-fallen-realm",
+      }));
+      expect(identityRows).toEqual([
+        { id: "a-ember-seal" },
+        { id: "l-fallen-realm" },
       ]);
     } finally {
       db.close();

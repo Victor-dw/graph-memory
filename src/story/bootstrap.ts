@@ -72,7 +72,13 @@ export function createSeedWorld(): SeedWorld {
       { id: "l-fallen-realm", name: "Fallen Ember Secret Realm", kind: "secret-realm" },
     ],
     artifacts: [
-      { id: "a-ember-seal", name: "Ember Seal", kind: "inheritance-token", ownerId: "c-shen-mo" },
+      {
+        id: "a-ember-seal",
+        name: "Ember Seal",
+        kind: "inheritance-token",
+        ownerId: "c-shen-mo",
+        locationId: "l-fallen-realm",
+      },
     ],
     threads: [
       { id: "t-secret-realm", name: "Secret realm inheritance struggle", status: "active" },

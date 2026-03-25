@@ -80,6 +80,13 @@ export function createStoryWorldState(db: DatabaseSyncInstance): StoryWorldState
           toId: "c-shen-mo",
           visibility: "public",
         },
+        {
+          id: "sr-ember-seal-located-in-fallen-realm",
+          fromId: "a-ember-seal",
+          relation: "LOCATED_IN",
+          toId: "l-fallen-realm",
+          visibility: "public",
+        },
       ].filter((relation) => presentIds.has(relation.fromId) && presentIds.has(relation.toId));
       const canonicalSignals = [
         {

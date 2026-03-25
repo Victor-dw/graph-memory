@@ -35,6 +35,7 @@ export interface StoryArtifact {
   name: string;
   kind: string;
   ownerId?: string;
+  locationId?: string;
 }
 
 export interface StoryThread {
