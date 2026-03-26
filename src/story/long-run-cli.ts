@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { getStoryRuntimeErrorCode } from "../engine/llm.ts";
 import { readTurnsArg } from "./cli.ts";
 import { loadStoryConfig } from "./config.ts";
 import { readBundleMetrics, type StoryRunBundleMetrics } from "./output/bundle-metrics.ts";
@@ -32,6 +33,7 @@ interface StoryLongRunSessionSummary {
   modelName: string;
   completedRuns: number;
   failedRuns: number;
+  lastFailureCode: string | null;
   lastRunId: string | null;
   lastBundlePath: string | null;
   lastRunMetrics: StoryRunBundleMetrics | null;
@@ -102,6 +104,7 @@ export async function runStoryLongRunCli(
     modelName: cfg.llm.model,
     completedRuns: 0,
     failedRuns: 0,
+    lastFailureCode: null,
     lastRunId: null,
     lastBundlePath: null,
     lastRunMetrics: null,
@@ -169,12 +172,14 @@ export async function runStoryLongRunCli(
       } catch (error) {
         summary.failedRuns += 1;
         summary.failureMessage = error instanceof Error ? error.message : String(error);
+        summary.lastFailureCode = getStoryRuntimeErrorCode(error);
         summary.updatedAt = runtime.now().toISOString();
         writeSummary(summary);
         appendEvent(eventsPath, {
           type: "run-failed",
           at: summary.updatedAt,
           failedRuns: summary.failedRuns,
+          failureCode: summary.lastFailureCode,
           message: summary.failureMessage,
         });
         if (cooldownSeconds > 0 && shouldWaitForNextIteration(summary, stopFilePath, maxRuns, deadlineAt, runtime.now())) {
@@ -183,37 +188,54 @@ export async function runStoryLongRunCli(
         continue;
       }
 
-      const metadata = readSeriesMetadata(seriesRoot, seriesId);
-      const latestRun = findRunById(metadata.runs, metadata.latestRunId);
-      if (!latestRun || latestRun.status !== "success") {
-        throw new Error("[story-long-run] latest successful run metadata missing after story:series execution");
-      }
+      try {
+        const metadata = readSeriesMetadata(seriesRoot, seriesId);
+        const latestRun = findRunById(metadata.runs, metadata.latestRunId);
+        if (!latestRun || latestRun.status !== "success") {
+          throw new Error("[story-long-run] latest successful run metadata missing after story:series execution");
+        }
 
-      summary.completedRuns += 1;
-      summary.lastRunId = latestRun.runId;
-      summary.lastBundlePath = latestRun.path ?? null;
-      const metricsResult = collectBundleMetrics(latestRun.path);
-      if (metricsResult.metricsUnavailable) {
-        summary.lastRunMetrics = null;
-        summary.metricsUnavailable = true;
-        summary.lastRunMetricsWarning = metricsResult.warning;
-      } else {
-        summary.lastRunMetrics = metricsResult.bundleMetrics;
-        summary.metricsUnavailable = false;
-        summary.lastRunMetricsWarning = null;
+        summary.completedRuns += 1;
+        summary.lastRunId = latestRun.runId;
+        summary.lastBundlePath = latestRun.path ?? null;
+        const metricsResult = collectBundleMetrics(latestRun.path);
+        if (metricsResult.metricsUnavailable) {
+          summary.lastRunMetrics = null;
+          summary.metricsUnavailable = true;
+          summary.lastRunMetricsWarning = metricsResult.warning;
+        } else {
+          summary.lastRunMetrics = metricsResult.bundleMetrics;
+          summary.metricsUnavailable = false;
+          summary.lastRunMetricsWarning = null;
+        }
+        summary.updatedAt = runtime.now().toISOString();
+        writeSummary(summary);
+        appendEvent(eventsPath, {
+          type: "run-succeeded",
+          at: summary.updatedAt,
+          completedRuns: summary.completedRuns,
+          latestRunId: latestRun.runId,
+          latestBundlePath: latestRun.path,
+          bundleMetrics: metricsResult.metricsUnavailable ? undefined : metricsResult.bundleMetrics,
+          metricsUnavailable: metricsResult.metricsUnavailable || undefined,
+          warning: metricsResult.metricsUnavailable ? metricsResult.warning : undefined,
+        });
+      } catch (error) {
+        summary.failedRuns += 1;
+        summary.failureMessage = error instanceof Error ? error.message : String(error);
+        summary.lastFailureCode = getStoryRuntimeErrorCode(error);
+        summary.status = "failed";
+        summary.updatedAt = runtime.now().toISOString();
+        writeSummary(summary);
+        appendEvent(eventsPath, {
+          type: "run-failed",
+          at: summary.updatedAt,
+          failedRuns: summary.failedRuns,
+          failureCode: summary.lastFailureCode,
+          message: summary.failureMessage,
+        });
+        throw error;
       }
-      summary.updatedAt = runtime.now().toISOString();
-      writeSummary(summary);
-      appendEvent(eventsPath, {
-        type: "run-succeeded",
-        at: summary.updatedAt,
-        completedRuns: summary.completedRuns,
-        latestRunId: latestRun.runId,
-        latestBundlePath: latestRun.path,
-        bundleMetrics: metricsResult.metricsUnavailable ? undefined : metricsResult.bundleMetrics,
-        metricsUnavailable: metricsResult.metricsUnavailable || undefined,
-        warning: metricsResult.metricsUnavailable ? metricsResult.warning : undefined,
-      });
 
       if (cooldownSeconds > 0 && shouldWaitForNextIteration(summary, stopFilePath, maxRuns, deadlineAt, runtime.now())) {
         await runtime.sleep(cooldownSeconds * 1000);

@@ -40,6 +40,10 @@ Current branch has already verified:
 - live MiniMax smoke passes
 - 3-run live soak passes
 - 6-run live soak passes
+- 24h supervised soak passes
+- long-run session failures are classified in controller state
+- malformed chapter/faction ranking responses degrade to original-order fallback instead of failing the whole iteration
+- transient network `fetch failed` provider errors are retried
 
 Practical conclusion:
 
@@ -53,6 +57,7 @@ Current best reading of readiness:
 
 - yes for supervised generation, iterative authoring, and further soak validation
 - no for "remove fallback and trust schema v2 alone everywhere"
+- no for fully unattended cutover without another post-hardening soak
 - no for committing secrets or hard-coding provider credentials into repo files
 
 ## Core Rule
@@ -212,6 +217,9 @@ When touching model runtime or provider wiring:
 - keep provider configuration externalized through local env or runtime config
 - never check API keys, tokens, or copied provider snippets into tracked files
 - verify failure behavior is survivable for long-run loops before calling a provider integration "done"
+- preserve typed failure outcomes in `summary.json` / `events.jsonl`
+- `llm_empty_content` is an intentional classified failure mode, not a silent success case
+- malformed chapter/faction ranking responses should remain observable via warnings even when they no longer fail an iteration
 
 ## Verification Gate
 
@@ -242,6 +250,14 @@ npx vitest run \
   test/story/schema-v2-store.test.ts
 ```
 
+When changing provider/runtime hardening or long-run recovery:
+
+```bash
+npx vitest run \
+  test/story/cli.test.ts \
+  test/story/long-run-cli.test.ts
+```
+
 If making a cutover decision, also inspect latest bundle metrics:
 
 - total legacy `relations`
@@ -249,6 +265,8 @@ If making a cutover decision, also inspect latest bundle metrics:
 - `EXECUTES` count in projected vs legacy
 - `threadState`
 - `consistency_issues`
+- `summary.json:lastFailureCode`
+- `events.jsonl:run-failed.failureCode`
 
 ## Cutover Guidance
 

@@ -1,4 +1,8 @@
-import type { CompleteFn } from "../../engine/llm.ts";
+import {
+  StoryRuntimeError,
+  getStoryRuntimeErrorCode,
+  type CompleteFn,
+} from "../../engine/llm.ts";
 import type { StoryRuntimeConfig } from "../config.ts";
 import { createAnthropicCompatibleCompleteFn, createStoryCompleteFn } from "../../engine/llm.ts";
 
@@ -108,7 +112,7 @@ function buildStoryModelClient(completeFn: CompleteFn): StoryModelClient {
         "Return only a JSON array of faction action ids ordered from strongest to weakest.",
         JSON.stringify({ actions, context }),
       );
-      return parseRankedActions(raw, actions, "faction action");
+      return parseRankedActionsWithFallback(raw, actions, "faction action");
     },
     rerankChapterFocus: async (candidates, context) => {
       const raw = await callModel(
@@ -116,7 +120,7 @@ function buildStoryModelClient(completeFn: CompleteFn): StoryModelClient {
         "Return only a JSON array of chapter focus ids ordered from strongest to weakest.",
         JSON.stringify({ candidates, context }),
       );
-      return parseRankedSelections(raw, candidates);
+      return parseRankedSelectionsWithFallback(raw, candidates);
     },
     generateChapter: async (packet) => {
       const prompt = [
@@ -127,7 +131,10 @@ function buildStoryModelClient(completeFn: CompleteFn): StoryModelClient {
       if (narrative.trim()) {
         return narrative;
       }
-      throw new Error("[story-runtime] Invalid chapter generation response");
+      throw new StoryRuntimeError(
+        "invalid_chapter_generation",
+        "[story-runtime] Invalid chapter generation response",
+      );
     },
     summarizeTurn: async (input) => {
       const summaryPrompt = `Summarize turn ${input.turnNumber} with highlights ${input.highlights.join(";")}`;
@@ -135,7 +142,10 @@ function buildStoryModelClient(completeFn: CompleteFn): StoryModelClient {
       if (summary.trim()) {
         return summary;
       }
-      throw new Error("[story-runtime] Invalid turn summary response");
+      throw new StoryRuntimeError(
+        "invalid_turn_summary",
+        "[story-runtime] Invalid turn summary response",
+      );
     },
     extractClaims: async (prose) => {
       const raw = await callModel(
@@ -178,6 +188,24 @@ function parseRankedActions(raw: string, actions: StoryAction[], label: "actor a
   return ranked;
 }
 
+function parseRankedActionsWithFallback(
+  raw: string,
+  actions: StoryAction[],
+  label: "faction action",
+) {
+  let ids: string[];
+  try {
+    ids = parseJsonArrayOfStrings(raw, `Invalid ${label} ranking response`);
+  } catch (error) {
+    if (getStoryRuntimeErrorCode(error) !== "invalid_faction_action_ranking") {
+      throw error;
+    }
+    console.warn(`[story-runtime] Falling back to original ${label} order after malformed model response`);
+    return actions;
+  }
+  return rankActionsFromIds(ids, actions, label);
+}
+
 function parseRankedSelections(raw: string, candidates: ChapterSelection[]) {
   const ids = parseJsonArrayOfStrings(raw, "Invalid chapter focus ranking response");
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
@@ -196,10 +224,77 @@ function parseRankedSelections(raw: string, candidates: ChapterSelection[]) {
   return ranked;
 }
 
+function parseRankedSelectionsWithFallback(raw: string, candidates: ChapterSelection[]) {
+  let ids: string[];
+  try {
+    ids = parseJsonArrayOfStrings(raw, "Invalid chapter focus ranking response");
+  } catch (error) {
+    if (getStoryRuntimeErrorCode(error) !== "invalid_chapter_focus_ranking") {
+      throw error;
+    }
+    console.warn("[story-runtime] Falling back to original chapter focus order after malformed model response");
+    return candidates;
+  }
+  return rankSelectionsFromIds(ids, candidates);
+}
+
+function rankActionsFromIds(
+  ids: string[],
+  actions: StoryAction[],
+  label: "actor action" | "faction action",
+) {
+  const byId = new Map(actions.map((action) => [action.id, action]));
+  const ranked = ids.map((id) => {
+    const action = byId.get(id);
+    if (!action) {
+      throw new StoryRuntimeError(
+        label === "actor action" ? "invalid_actor_action_ranking" : "invalid_faction_action_ranking",
+        `[story-runtime] Invalid ${label} ranking response`,
+      );
+    }
+    return action;
+  });
+
+  if (ranked.length !== actions.length || new Set(ids).size !== actions.length) {
+    throw new StoryRuntimeError(
+      label === "actor action" ? "invalid_actor_action_ranking" : "invalid_faction_action_ranking",
+      `[story-runtime] Invalid ${label} ranking response`,
+    );
+  }
+
+  return ranked;
+}
+
+function rankSelectionsFromIds(ids: string[], candidates: ChapterSelection[]) {
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const ranked = ids.map((id) => {
+    const candidate = byId.get(id);
+    if (!candidate) {
+      throw new StoryRuntimeError(
+        "invalid_chapter_focus_ranking",
+        "[story-runtime] Invalid chapter focus ranking response",
+      );
+    }
+    return candidate;
+  });
+
+  if (ranked.length !== candidates.length || new Set(ids).size !== candidates.length) {
+    throw new StoryRuntimeError(
+      "invalid_chapter_focus_ranking",
+      "[story-runtime] Invalid chapter focus ranking response",
+    );
+  }
+
+  return ranked;
+}
+
 function parseClaims(raw: string): StoryClaim[] {
   const parsed = parseJsonValue(raw, "Invalid story claims response");
   if (!Array.isArray(parsed)) {
-    throw new Error("[story-runtime] Invalid story claims response");
+    throw new StoryRuntimeError(
+      "invalid_story_claims",
+      "[story-runtime] Invalid story claims response",
+    );
   }
 
   return parsed.map((claim) => {
@@ -208,7 +303,10 @@ function parseClaims(raw: string): StoryClaim[] {
       typeof claim?.predicate !== "string" ||
       typeof claim?.evidenceSpan !== "string"
     ) {
-      throw new Error("[story-runtime] Invalid story claims response");
+      throw new StoryRuntimeError(
+        "invalid_story_claims",
+        "[story-runtime] Invalid story claims response",
+      );
     }
 
     return {
@@ -224,7 +322,7 @@ function parseClaims(raw: string): StoryClaim[] {
 function parseJsonArrayOfStrings(raw: string, message: string) {
   const parsed = parseJsonValue(raw, message);
   if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
-    throw new Error(`[story-runtime] ${message}`);
+    throw storyRuntimeErrorFromMessage(message);
   }
   return parsed;
 }
@@ -238,6 +336,22 @@ function parseJsonValue(raw: string, message: string) {
   try {
     return JSON.parse(normalized);
   } catch {
-    throw new Error(`[story-runtime] ${message}`);
+    throw storyRuntimeErrorFromMessage(message);
   }
+}
+
+function storyRuntimeErrorFromMessage(message: string): StoryRuntimeError {
+  if (message === "Invalid actor action ranking response") {
+    return new StoryRuntimeError("invalid_actor_action_ranking", `[story-runtime] ${message}`);
+  }
+  if (message === "Invalid faction action ranking response") {
+    return new StoryRuntimeError("invalid_faction_action_ranking", `[story-runtime] ${message}`);
+  }
+  if (message === "Invalid chapter focus ranking response") {
+    return new StoryRuntimeError("invalid_chapter_focus_ranking", `[story-runtime] ${message}`);
+  }
+  if (message === "Invalid story claims response") {
+    return new StoryRuntimeError("invalid_story_claims", `[story-runtime] ${message}`);
+  }
+  return new StoryRuntimeError("llm_invalid_content", `[story-runtime] ${message}`);
 }

@@ -29,6 +29,30 @@ export interface StoryCompleteOptions {
   retryBaseDelayMs?: number;
 }
 
+export type StoryRuntimeErrorCode =
+  | "llm_empty_content"
+  | "llm_invalid_json"
+  | "llm_invalid_content"
+  | "llm_http_error"
+  | "llm_network_error"
+  | "llm_request_timeout"
+  | "invalid_actor_action_ranking"
+  | "invalid_faction_action_ranking"
+  | "invalid_chapter_focus_ranking"
+  | "invalid_story_claims"
+  | "invalid_chapter_generation"
+  | "invalid_turn_summary";
+
+export class StoryRuntimeError extends Error {
+  code: StoryRuntimeErrorCode;
+
+  constructor(code: StoryRuntimeErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "StoryRuntimeError";
+    this.code = code;
+  }
+}
+
 export function createStoryCompleteFn(
   options: StoryCompleteOptions,
 ): CompleteFn {
@@ -61,7 +85,10 @@ export function createStoryCompleteFn(
     if (typeof text === "string" && text.trim()) {
       return text;
     }
-    throw new Error("[story-runtime] OpenAI-compatible LLM returned empty content");
+    throw new StoryRuntimeError(
+      "llm_empty_content",
+      "[story-runtime] OpenAI-compatible LLM returned empty content",
+    );
   };
 }
 
@@ -98,7 +125,10 @@ export function createAnthropicCompatibleCompleteFn(
     if (text.trim()) {
       return text;
     }
-    throw new Error("[story-runtime] Anthropic-compatible LLM returned empty content");
+    throw new StoryRuntimeError(
+      "llm_empty_content",
+      "[story-runtime] Anthropic-compatible LLM returned empty content",
+    );
   };
 }
 
@@ -150,7 +180,7 @@ export function createCompleteFn(
       body: JSON.stringify({ model, max_tokens: 4096, system, messages: [{ role: "user", content: user }] }),
     });
     if (!res.ok) throw new Error(`[graph-memory] Anthropic API ${res.status}`);
-    return ((await res.json() as any).content?.[0]?.text) ?? "";
+    return extractAnthropicText(await res.json() as any);
   };
 }
 
@@ -178,7 +208,17 @@ async function fetchWithStoryTimeout(
     });
   } catch (error) {
     if (isAbortError(error)) {
-      throw new Error(`[story-runtime] ${providerLabel} LLM request timed out after ${timeoutMs}ms`);
+      throw new StoryRuntimeError(
+        "llm_request_timeout",
+        `[story-runtime] ${providerLabel} LLM request timed out after ${timeoutMs}ms`,
+      );
+    }
+    if (isNetworkStoryRequestError(error)) {
+      throw new StoryRuntimeError(
+        "llm_network_error",
+        `[story-runtime] ${providerLabel} LLM request failed: ${error.message}`,
+        { cause: error },
+      );
     }
     throw error;
   } finally {
@@ -201,10 +241,12 @@ async function fetchWithStoryPolicy(
       if (!shouldRetryStoryStatus(res.status) || attempt === maxRetries) {
         return res;
       }
+      logStoryRetry(providerLabel, attempt, maxRetries, retryDelayMs(retryBaseDelayMs, attempt), `HTTP ${res.status}`);
     } catch (error) {
       if (!isRetryableStoryRequestError(error) || attempt === maxRetries) {
         throw error;
       }
+      logStoryRetry(providerLabel, attempt, maxRetries, retryDelayMs(retryBaseDelayMs, attempt), toStoryRetryReason(error));
     }
 
     await sleep(retryDelayMs(retryBaseDelayMs, attempt));
@@ -217,13 +259,19 @@ async function readStoryJsonResponse(res: Response, providerLabel: string) {
   try {
     return await res.json() as any;
   } catch {
-    throw new Error(`[story-runtime] ${providerLabel} LLM returned invalid JSON`);
+    throw new StoryRuntimeError(
+      "llm_invalid_json",
+      `[story-runtime] ${providerLabel} LLM returned invalid JSON`,
+    );
   }
 }
 
 function extractAnthropicText(data: any): string {
   if (!Array.isArray(data.content)) {
-    throw new Error("[story-runtime] Anthropic-compatible LLM returned invalid content");
+    throw new StoryRuntimeError(
+      "llm_invalid_content",
+      "[story-runtime] Anthropic-compatible LLM returned invalid content",
+    );
   }
 
   const text = data.content
@@ -236,7 +284,10 @@ function extractAnthropicText(data: any): string {
     return text;
   }
 
-  throw new Error("[story-runtime] Anthropic-compatible LLM returned empty content");
+  throw new StoryRuntimeError(
+    "llm_empty_content",
+    "[story-runtime] Anthropic-compatible LLM returned empty content",
+  );
 }
 
 function isAbortError(error: unknown): boolean {
@@ -244,8 +295,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 function isRetryableStoryRequestError(error: unknown): boolean {
-  return error instanceof Error
-    && error.message.includes("LLM request timed out");
+  return isStoryRuntimeErrorCode(error, "llm_request_timeout", "llm_network_error");
 }
 
 function shouldRetryStoryStatus(status: number): boolean {
@@ -257,6 +307,58 @@ function retryDelayMs(baseDelayMs: number, attempt: number): number {
     return 0;
   }
   return baseDelayMs * (2 ** attempt);
+}
+
+function isNetworkStoryRequestError(error: unknown): error is Error {
+  return error instanceof Error
+    && /(fetch failed|network|socket|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT)/i.test(error.message);
+}
+
+function logStoryRetry(
+  providerLabel: string,
+  attempt: number,
+  maxRetries: number,
+  delayMs: number,
+  reason: string,
+): void {
+  console.warn(
+    `[story-runtime] ${providerLabel} retry ${attempt + 1}/${maxRetries + 1} in ${delayMs}ms after ${reason}`,
+  );
+}
+
+function toStoryRetryReason(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function isStoryRuntimeErrorCode(
+  error: unknown,
+  ...codes: StoryRuntimeErrorCode[]
+): error is StoryRuntimeError {
+  return error instanceof StoryRuntimeError && codes.includes(error.code);
+}
+
+export function getStoryRuntimeErrorCode(error: unknown): StoryRuntimeErrorCode | "unknown" {
+  if (error instanceof StoryRuntimeError) {
+    return error.code;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("returned empty content")) return "llm_empty_content";
+  if (message.includes("returned invalid JSON")) return "llm_invalid_json";
+  if (message.includes("returned invalid content")) return "llm_invalid_content";
+  if (message.includes("timed out")) return "llm_request_timeout";
+  if (message.includes("fetch failed")) return "llm_network_error";
+  if (message.includes("Invalid actor action ranking response")) return "invalid_actor_action_ranking";
+  if (message.includes("Invalid faction action ranking response")) return "invalid_faction_action_ranking";
+  if (message.includes("Invalid chapter focus ranking response")) return "invalid_chapter_focus_ranking";
+  if (message.includes("Invalid story claims response")) return "invalid_story_claims";
+  if (message.includes("Invalid chapter generation response")) return "invalid_chapter_generation";
+  if (message.includes("Invalid turn summary response")) return "invalid_turn_summary";
+  if (message.includes("LLM API")) return "llm_http_error";
+  return "unknown";
 }
 
 async function sleep(ms: number): Promise<void> {

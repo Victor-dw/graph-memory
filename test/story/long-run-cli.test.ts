@@ -369,6 +369,7 @@ describe("story:long-run cli", () => {
         failedRuns: number;
         lastRunId: string | null;
         failureMessage: string | null;
+        lastFailureCode?: string | null;
         lastRunMetrics?: {
           projectedRelations: number;
         };
@@ -385,12 +386,14 @@ describe("story:long-run cli", () => {
       expect(summary.failedRuns).toBe(1);
       expect(summary.lastRunId).toBe(metadata.latestRunId);
       expect(summary.failureMessage).toBe("transient provider 500");
+      expect(summary.lastFailureCode).toBe("unknown");
       expect(summary.lastRunMetrics).toEqual(expect.objectContaining({
         projectedRelations: expect.any(Number),
       }));
       expect(runFailedEvent).toEqual(expect.objectContaining({
         failedRuns: 1,
         message: "transient provider 500",
+        failureCode: "unknown",
       }));
       expect(runSucceededEvents).toHaveLength(2);
       expect(runSucceededEvents.at(-1)).toEqual(expect.objectContaining({
@@ -410,6 +413,124 @@ describe("story:long-run cli", () => {
         "session-completed",
       ]);
       expect(sleepCalls).toEqual([5000, 5000]);
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+      rmSync(controlRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("records classified empty-content failures in summary and event logs", async () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-series-"));
+    const controlRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-control-"));
+    const dbPath = path.join(seriesRoot, "novel.db");
+    let attempt = 0;
+
+    process.env.NOVEL_LLM_MODE = "anthropic-compatible";
+    process.env.NOVEL_DB_PATH = dbPath;
+    process.env.NOVEL_CHAPTER_EVERY_TURNS = "3";
+    process.env.NOVEL_RESET_ON_START = "0";
+
+    try {
+      await runStoryLongRunCli([
+        "--series=mainline-a",
+        "--turns=3",
+        "--stub-model",
+        "--max-runs=1",
+        "--duration-hours=1",
+        "--label=classifies-empty-content",
+        `--series-root=${seriesRoot}`,
+        `--control-dir=${controlRoot}`,
+      ], {
+        runSeries: async (argv) => {
+          attempt += 1;
+          if (attempt === 1) {
+            throw new Error("[story-runtime] Anthropic-compatible LLM returned empty content");
+          }
+          return runStorySeriesCli(argv);
+        },
+      });
+
+      const sessionDir = path.join(controlRoot, "classifies-empty-content");
+      const summary = JSON.parse(
+        readFileSync(path.join(sessionDir, "summary.json"), "utf8"),
+      ) as {
+        failedRuns: number;
+        failureMessage: string | null;
+        lastFailureCode?: string | null;
+      };
+      const events = readJsonLines(path.join(sessionDir, "events.jsonl"));
+      const runFailedEvent = events.find((event) => event.type === "run-failed");
+
+      expect(summary.failedRuns).toBe(1);
+      expect(summary.failureMessage).toBe("[story-runtime] Anthropic-compatible LLM returned empty content");
+      expect(summary.lastFailureCode).toBe("llm_empty_content");
+      expect(runFailedEvent).toEqual(expect.objectContaining({
+        message: "[story-runtime] Anthropic-compatible LLM returned empty content",
+        failureCode: "llm_empty_content",
+      }));
+    } finally {
+      rmSync(seriesRoot, { recursive: true, force: true });
+      rmSync(controlRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("records post-run metadata failures as failed iterations instead of silently completing them", async () => {
+    const seriesRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-series-"));
+    const controlRoot = mkdtempSync(path.join(os.tmpdir(), "story-long-run-control-"));
+    const dbPath = path.join(seriesRoot, "novel.db");
+    const startedAt = new Date("2026-03-25T00:00:00.000Z");
+    let nowCallCount = 0;
+
+    process.env.NOVEL_LLM_MODE = "anthropic-compatible";
+    process.env.NOVEL_DB_PATH = dbPath;
+    process.env.NOVEL_CHAPTER_EVERY_TURNS = "3";
+    process.env.NOVEL_RESET_ON_START = "0";
+
+    try {
+      await expect(runStoryLongRunCli([
+        "--series=mainline-a",
+        "--turns=3",
+        "--stub-model",
+        "--duration-hours=1",
+        "--label=post-run-metadata-failure",
+        `--series-root=${seriesRoot}`,
+        `--control-dir=${controlRoot}`,
+      ], {
+        now: () => {
+          nowCallCount += 1;
+          if (nowCallCount <= 6) {
+            return new Date(startedAt);
+          }
+          return new Date(startedAt.getTime() + (2 * 60 * 60 * 1000));
+        },
+        runSeries: async () => {
+          // Intentionally leave series metadata missing to simulate a broken post-run contract.
+        },
+      })).rejects.toThrow("[story-series] missing metadata for series=mainline-a");
+
+      const sessionDir = path.join(controlRoot, "post-run-metadata-failure");
+      const summary = JSON.parse(
+        readFileSync(path.join(sessionDir, "summary.json"), "utf8"),
+      ) as {
+        status: string;
+        completedRuns: number;
+        failedRuns: number;
+        lastFailureCode?: string | null;
+        failureMessage: string | null;
+      };
+      const events = readJsonLines(path.join(sessionDir, "events.jsonl"));
+      const runFailedEvent = events.find((event) => event.type === "run-failed");
+
+      expect(summary.status).toBe("failed");
+      expect(summary.completedRuns).toBe(0);
+      expect(summary.failedRuns).toBe(1);
+      expect(summary.lastFailureCode).toBe("unknown");
+      expect(summary.failureMessage).toContain("missing metadata for series=mainline-a");
+      expect(runFailedEvent).toEqual(expect.objectContaining({
+        failedRuns: 1,
+        failureCode: "unknown",
+        message: expect.stringContaining("missing metadata for series=mainline-a"),
+      }));
     } finally {
       rmSync(seriesRoot, { recursive: true, force: true });
       rmSync(controlRoot, { recursive: true, force: true });

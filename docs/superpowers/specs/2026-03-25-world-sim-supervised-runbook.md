@@ -161,14 +161,59 @@ If any required file is missing, treat it as a **hard failure**.
 
 For `story:long-run`, inspect:
 
-- `summary.json` for status, completed runs, last bundle path, and failure message
+- `summary.json` for status, completed runs, last bundle path, `failureMessage`, and `lastFailureCode`
 - `events.jsonl` for a timeline (`session-started`, `run-started`, `run-succeeded`, `run-failed`, `session-stopped`)
+- every `run-failed` event should carry a `failureCode`
 
 Default location:
 
 ```text
 .local/<series-root>/.long-run/<label>/
 ```
+
+### Operational taxonomy
+
+Use these controller-side classes when triaging supervised runs:
+
+- `llm_empty_content`
+  Meaning: provider returned a structurally successful response with no usable text.
+  Action: recoverable iteration failure. Warn and continue unless it clusters or causes missed deadlines.
+- `llm_network_error`
+  Meaning: transient fetch/network failure such as `fetch failed`.
+  Action: recoverable iteration failure after retries are exhausted. Warn and continue unless sustained.
+- `llm_request_timeout`
+  Meaning: provider request exceeded the configured timeout.
+  Action: recoverable iteration failure after retries are exhausted. Warn and continue unless sustained.
+- `invalid_chapter_focus_ranking`
+  Meaning: model returned malformed chapter-focus ranking JSON.
+  Action: no longer a failed iteration by itself; runtime should fall back to original order and log a warning.
+- `invalid_faction_action_ranking`
+  Meaning: model returned malformed faction-ranking JSON.
+  Action: no longer a failed iteration by itself; runtime should fall back to original order and log a warning.
+- `unknown`
+  Meaning: local contract or orchestration failure outside the typed runtime classes.
+  Action: investigate. Repeated `unknown` failures are stronger evidence of a local bug than a provider blip.
+
+Hard-stop classes remain:
+
+- restore failure
+- post-run metadata / contract failure after `story:series` reports success
+- missing required bundle artifacts
+- projected `EXECUTES` leakage
+- non-zero `consistency_issues`
+- uncaught controller exit
+
+Recoverable / supervised classes remain:
+
+- `llm_empty_content`
+- `llm_network_error`
+- `llm_request_timeout`
+- provider 5xx / 429 cases that still exhaust retries
+
+Normalized degraded behaviors that should be visible in logs but not counted as failed iterations:
+
+- malformed chapter-focus ranking fallback
+- malformed faction-ranking fallback
 
 ### Bundle-level story memory shape (schema v2 vs legacy)
 
@@ -255,6 +300,8 @@ Hard failures (stop and investigate):
 
 Soft failures / warnings (do not immediately declare schema v2 broken, but do not proceed blindly):
 
+- repeated `llm_empty_content`, `llm_network_error`, or `llm_request_timeout` entries in `events.jsonl`
+- repeated malformed-ranking fallback warnings in runtime logs
 - projected coverage is still trivially small (e.g. `projectedRelations` stays near-zero) while manual continuity expectations rise.
 - chapter continuity is visibly regressing even when metrics look “clean”.
 - repeated operator interrupts (Ctrl-C) prevent clean signals.

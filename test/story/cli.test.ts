@@ -157,6 +157,34 @@ describe("story model runtime", () => {
     expect(attempts).toBe(2);
   });
 
+  it("retries transient anthropic-compatible fetch failures before succeeding", async () => {
+    let attempts = 0;
+    setFetchMock(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new TypeError("fetch failed");
+      }
+      return new Response(JSON.stringify({
+        content: [{ type: "text", text: "Recovered after fetch failure." }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const complete = createAnthropicCompatibleCompleteFn({
+      baseURL: "https://api.minimaxi.com/anthropic",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 25,
+      maxRetries: 1,
+      retryBaseDelayMs: 1,
+    });
+
+    await expect(complete("generate chapter", "recover me")).resolves.toBe("Recovered after fetch failure.");
+    expect(attempts).toBe(2);
+  });
+
   it("does not retry non-retryable anthropic-compatible 4xx responses", async () => {
     let attempts = 0;
     setFetchMock(async () => {
@@ -183,6 +211,124 @@ describe("story model runtime", () => {
       "[story-runtime] Anthropic-compatible LLM API 400:",
     );
     expect(attempts).toBe(1);
+  });
+
+  it("falls back to the original chapter focus order when the model returns malformed ranking JSON", async () => {
+    setFetchMock(async () =>
+      new Response(JSON.stringify({
+        content: [{ type: "text", text: "not-json" }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    const client = createStoryModelClient({
+      mode: "anthropic-compatible",
+      baseURL: "https://api.minimaxi.com/anthropic",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 180_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 1_000,
+    });
+    const candidates = [
+      { id: "focus-1", focus: "sect trial", score: 0.7 },
+      { id: "focus-2", focus: "spirit mine", score: 0.5 },
+    ];
+
+    await expect(client.rerankChapterFocus(candidates, { directorId: "dir-1" })).resolves.toEqual(candidates);
+  });
+
+  it("falls back to the original faction action order when the model returns malformed ranking JSON", async () => {
+    setFetchMock(async () =>
+      new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: "not-json",
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    const client = createStoryModelClient({
+      mode: "openai-compatible",
+      baseURL: "https://api.example.com/openai",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 180_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 1_000,
+    });
+    const actions = [
+      { id: "faction-1", type: "raid" },
+      { id: "faction-2", type: "defend" },
+    ];
+
+    await expect(
+      client.rerankFactionActions(actions, { factionId: "sect-a" }),
+    ).resolves.toEqual(actions);
+  });
+
+  it("rejects duplicate chapter focus ids instead of silently falling back", async () => {
+    setFetchMock(async () =>
+      new Response(JSON.stringify({
+        content: [{ type: "text", text: JSON.stringify(["focus-1", "focus-1"]) }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    const client = createStoryModelClient({
+      mode: "anthropic-compatible",
+      baseURL: "https://api.minimaxi.com/anthropic",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 180_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 1_000,
+    });
+
+    await expect(client.rerankChapterFocus([
+      { id: "focus-1", focus: "sect trial", score: 0.7 },
+      { id: "focus-2", focus: "spirit mine", score: 0.5 },
+    ], { directorId: "dir-1" })).rejects.toThrowError("[story-runtime] Invalid chapter focus ranking response");
+  });
+
+  it("rejects unknown faction ids instead of silently falling back", async () => {
+    setFetchMock(async () =>
+      new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(["faction-1", "missing-id"]),
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    const client = createStoryModelClient({
+      mode: "openai-compatible",
+      baseURL: "https://api.example.com/openai",
+      model: "MiniMax-M2.7",
+      apiKey: "test-key",
+      timeoutMs: 180_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 1_000,
+    });
+
+    await expect(
+      client.rerankFactionActions([
+        { id: "faction-1", type: "raid" },
+        { id: "faction-2", type: "defend" },
+      ], { factionId: "sect-a" }),
+    ).rejects.toThrowError("[story-runtime] Invalid faction action ranking response");
   });
 });
 

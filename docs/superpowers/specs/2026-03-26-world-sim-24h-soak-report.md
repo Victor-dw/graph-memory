@@ -24,6 +24,13 @@ Operational conclusion:
 - the long-run controller no longer has the earlier fatal weakness where one failed iteration aborts the whole session
 - the dominant remaining instability is provider / model-response quality, not continuation-loop survival
 
+Post-soak hardening completed immediately after this run:
+
+- transient `fetch failed` network errors are now retried
+- long-run controller now records typed `failureCode` values in `summary.json` and `events.jsonl`
+- malformed chapter-focus and faction-ranking model responses now degrade to original-order fallback instead of failing the whole iteration
+- post-run metadata/validation failures are now treated as fatal session failures instead of being silently flattened into a generic completed session
+
 ## Source Artifacts
 
 Primary runtime artifacts for this soak:
@@ -73,7 +80,7 @@ Interpretation:
 
 - failures are now mostly model/provider-response quality problems
 - controller resilience was good enough to absorb them without collapsing the entire session
-- the highest-value next hardening work is stricter model-output validation / repair and provider fallback strategy, not loop survivability
+- this report's raw failure buckets predate the post-soak hardening slice that added typed `failureCode` output and malformed-ranking fallback
 
 ## Memory / Snapshot Health
 
@@ -156,11 +163,12 @@ Reasoning:
 
 Priority order:
 
-1. Add defensive handling for empty-content and malformed ranking responses before they surface as failed iterations.
-2. Add richer failure classification in long-run summary output so provider faults and model-format faults are easier to separate operationally.
-3. Add a second 24-hour supervised soak after response-hardening to confirm the recovered-failure rate drops materially.
+1. Run a second 24-hour supervised soak after the hardening slice to measure the new true failed-iteration rate.
+2. Separate future soak reporting into:
+   - typed failed iterations from `failureCode`
+   - normalized degraded behaviors such as malformed-ranking fallback warnings
+3. Add a small acceptance script that validates the latest bundle's required state files and core metrics after every long soak.
 4. Keep `dual-write` and keep schema v2 as the preferred read surface; do not cut over legacy compatibility yet.
-5. Add a small acceptance script that validates the latest bundle's required state files and core metrics after every long soak.
 
 ## Final Assessment
 
